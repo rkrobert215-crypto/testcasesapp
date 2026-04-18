@@ -14,7 +14,7 @@ var DEFAULT_SETTINGS = {
   openaiModel: "gpt-5.4",
   claudeModel: "claude-sonnet-4-20250514",
   geminiModel: "gemini-2.5-pro",
-  openrouterModel: "openrouter/free"
+  openrouterModel: "openrouter/auto"
 };
 var GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 var PROVIDER_SECRET_ENV_NAMES = {
@@ -129,18 +129,49 @@ async function callProvider({
         providerLabel: "Groq"
       });
     case "openrouter":
-      return await callOpenAiCompatibleTool({
-        url: "https://openrouter.ai/api/v1/chat/completions",
+      return await callOpenRouterWithFallback({
         apiKey: resolveApiKey(settings.openrouterApiKey, "OpenRouter", PROVIDER_SECRET_ENV_NAMES.openrouter),
         model: settings.openrouterModel,
         systemPrompt,
         userParts,
-        output,
-        providerLabel: "OpenRouter",
-        extraHeaders: getOpenRouterHeaders()
+        output
       });
     default:
       throw new Error("Unsupported AI provider.");
+  }
+}
+async function callOpenRouterWithFallback({
+  apiKey,
+  model,
+  systemPrompt,
+  userParts,
+  output
+}) {
+  try {
+    return await callOpenAiCompatibleTool({
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      apiKey,
+      model,
+      systemPrompt,
+      userParts,
+      output,
+      providerLabel: "OpenRouter",
+      extraHeaders: getOpenRouterHeaders()
+    });
+  } catch (error) {
+    if (!shouldRetryOpenRouterWithAuto(model, error)) {
+      throw error;
+    }
+    return await callOpenAiCompatibleTool({
+      url: "https://openrouter.ai/api/v1/chat/completions",
+      apiKey,
+      model: "openrouter/auto",
+      systemPrompt,
+      userParts,
+      output,
+      providerLabel: "OpenRouter",
+      extraHeaders: getOpenRouterHeaders()
+    });
   }
 }
 async function callOpenAiCompatibleTool({
@@ -446,6 +477,16 @@ function buildRepairUserParts(userParts, error) {
 }
 function isStructuredOutputParseError(error) {
   return error instanceof StructuredOutputParseError;
+}
+function shouldRetryOpenRouterWithAuto(model, error) {
+  if (model !== "openrouter/free") {
+    return false;
+  }
+  if (isStructuredOutputParseError(error)) {
+    return true;
+  }
+  const message = toError(error).message.toLowerCase();
+  return message.includes("no structured data") || message.includes("valid json") || message.includes("tool arguments") || message.includes("failed to call a function") || message.includes("failed_generation");
 }
 function isProvider(value) {
   return value === "openai" || value === "claude" || value === "gemini" || value === "groq" || value === "openrouter";

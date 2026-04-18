@@ -53,7 +53,7 @@ const DEFAULT_SETTINGS: AiSettings = {
   openaiModel: 'gpt-5.4',
   claudeModel: 'claude-sonnet-4-20250514',
   geminiModel: 'gemini-2.5-pro',
-  openrouterModel: 'openrouter/free',
+  openrouterModel: 'openrouter/auto',
 };
 
 const GROQ_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
@@ -183,18 +183,57 @@ async function callProvider<T>({
         providerLabel: 'Groq',
       });
     case 'openrouter':
-      return await callOpenAiCompatibleTool<T>({
-        url: 'https://openrouter.ai/api/v1/chat/completions',
+      return await callOpenRouterWithFallback<T>({
         apiKey: resolveApiKey(settings.openrouterApiKey, 'OpenRouter', PROVIDER_SECRET_ENV_NAMES.openrouter),
         model: settings.openrouterModel,
         systemPrompt,
         userParts,
         output,
-        providerLabel: 'OpenRouter',
-        extraHeaders: getOpenRouterHeaders(),
       });
     default:
       throw new Error('Unsupported AI provider.');
+  }
+}
+
+async function callOpenRouterWithFallback<T>({
+  apiKey,
+  model,
+  systemPrompt,
+  userParts,
+  output,
+}: {
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  userParts: AiPromptPart[];
+  output: StructuredOutputDefinition;
+}): Promise<T> {
+  try {
+    return await callOpenAiCompatibleTool<T>({
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      apiKey,
+      model,
+      systemPrompt,
+      userParts,
+      output,
+      providerLabel: 'OpenRouter',
+      extraHeaders: getOpenRouterHeaders(),
+    });
+  } catch (error) {
+    if (!shouldRetryOpenRouterWithAuto(model, error)) {
+      throw error;
+    }
+
+    return await callOpenAiCompatibleTool<T>({
+      url: 'https://openrouter.ai/api/v1/chat/completions',
+      apiKey,
+      model: 'openrouter/auto',
+      systemPrompt,
+      userParts,
+      output,
+      providerLabel: 'OpenRouter',
+      extraHeaders: getOpenRouterHeaders(),
+    });
   }
 }
 
@@ -592,6 +631,25 @@ function buildRepairUserParts(userParts: AiPromptPart[], error: StructuredOutput
 
 function isStructuredOutputParseError(error: unknown): error is StructuredOutputParseError {
   return error instanceof StructuredOutputParseError;
+}
+
+function shouldRetryOpenRouterWithAuto(model: string, error: unknown) {
+  if (model !== 'openrouter/free') {
+    return false;
+  }
+
+  if (isStructuredOutputParseError(error)) {
+    return true;
+  }
+
+  const message = toError(error).message.toLowerCase();
+  return (
+    message.includes('no structured data') ||
+    message.includes('valid json') ||
+    message.includes('tool arguments') ||
+    message.includes('failed to call a function') ||
+    message.includes('failed_generation')
+  );
 }
 
 function isProvider(value: unknown): value is AiProvider {

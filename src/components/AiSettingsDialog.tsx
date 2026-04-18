@@ -413,7 +413,7 @@ export function AiSettingsDialog({ settings, migrationNotices = [], isReady, onS
                 </p>
                 <p className="mt-2">
                   In a hosted deployment, the app sends your provider, model, and style selection but expects the real
-                  provider key to come from Supabase Edge Function secrets.
+                  provider key to come from server-side environment variables such as Vercel Environment Variables.
                 </p>
                 <p className="mt-2">
                   Use this only on your own machine. Browser local storage is convenient for personal local use, not a

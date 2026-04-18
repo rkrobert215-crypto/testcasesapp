@@ -94,7 +94,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   openaiModel: 'gpt-5.4',
   claudeModel: 'claude-sonnet-4-20250514',
   geminiModel: 'gemini-2.5-pro',
-  openrouterModel: 'openrouter/free',
+  openrouterModel: 'openrouter/auto',
 };
 
 export const PROVIDER_OPTIONS: ProviderOption[] = [
@@ -153,14 +153,14 @@ export const CLAUDE_MODEL_OPTIONS: ClaudeModelOption[] = [
 
 export const OPENROUTER_MODEL_OPTIONS: OpenRouterModelOption[] = [
   {
-    value: 'openrouter/free',
-    label: 'OpenRouter Free Router',
-    description: 'Zero-cost router that randomly selects a compatible free model for structured requests.',
-  },
-  {
     value: 'openrouter/auto',
     label: 'OpenRouter Auto Router',
-    description: 'Lets OpenRouter choose a high-quality model automatically. You pay the selected model rate.',
+    description: 'Recommended. Lets OpenRouter choose a stronger compatible model automatically for structured requests.',
+  },
+  {
+    value: 'openrouter/free',
+    label: 'OpenRouter Free Router',
+    description: 'Free router. Less reliable for strict structured testcase generation because the selected model can vary.',
   },
 ];
 
