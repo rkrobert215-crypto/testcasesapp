@@ -32,6 +32,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [react()],
     resolve: {
+      dedupe: ["react", "react-dom"],
       alias: {
         "@": path.resolve(__dirname, "./src"),
       },
@@ -48,8 +49,8 @@ export default defineConfig(({ mode }) => {
             if (id.includes("@radix-ui")) return "radix";
             if (
               id.includes("react-dom") ||
-              id.includes("react-router-dom") ||
               id.includes("react/jsx-runtime") ||
+              id.includes("scheduler") ||
               /node_modules[\\/]+react[\\/]/.test(id)
             ) {
               return "react-vendor";
