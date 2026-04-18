@@ -1,12 +1,26 @@
-import {
-  handleHostedFunctionRequest,
-  isKnownAiFunction,
-  toProviderFailure,
-} from '../../server/generate-test-cases-server.ts';
-
 export const config = {
+  runtime: 'nodejs',
   maxDuration: 300,
 };
+
+const KNOWN_AI_FUNCTIONS = new Set([
+  'generate-test-cases',
+  'requirement-analysis',
+  'audit-test-cases',
+  'smart-merge-testcases',
+  'validate-coverage',
+  'test-plan',
+  'traceability-matrix',
+  'test-data-plan',
+  'scenario-map',
+  'clarification-questions',
+]);
+
+interface ProviderFailure {
+  ok: false;
+  status: number;
+  errorText: string;
+}
 
 interface VercelRequestLike {
   method?: string;
@@ -37,23 +51,36 @@ export default async function handler(req: VercelRequestLike, res: VercelRespons
   }
 
   const functionName = resolveFunctionName(req.query?.functionName);
-  if (!functionName || !isKnownAiFunction(functionName)) {
+  if (!functionName || !KNOWN_AI_FUNCTIONS.has(functionName)) {
     res.status(404).json({ error: 'Not found.' });
     return;
   }
 
+  let toProviderFailure:
+    | ((error: unknown) => ProviderFailure | null)
+    | null = null;
+
   try {
+    const serverModule = await import('../../server/generate-test-cases-server.ts');
+    toProviderFailure = serverModule.toProviderFailure;
+
     const body = normalizeBody(req.body);
-    const result = await handleHostedFunctionRequest(functionName, body);
+    const result = await serverModule.handleHostedFunctionRequest(functionName, body);
     res.status(200).json(result);
   } catch (error) {
-    const providerError = toProviderFailure(error);
+    const providerError = toProviderFailure?.(error) ?? null;
     if (providerError) {
       res.status(providerError.status).json({ error: providerError.errorText });
       return;
     }
 
-    res.status(500).json({ error: error instanceof Error ? error.message : 'Unknown error' });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    const stack = error instanceof Error ? error.stack : undefined;
+
+    res.status(500).json({
+      error: message,
+      ...(stack ? { stack } : {}),
+    });
   }
 }
 
