@@ -61,7 +61,7 @@ export default async function handler(req: VercelRequestLike, res: VercelRespons
     | null = null;
 
   try {
-    const serverModule = await import('../../server/generate-test-cases-server.ts');
+    const serverModule = await import('../../server-dist/generate-test-cases-server.js');
     toProviderFailure = serverModule.toProviderFailure;
 
     const body = normalizeBody(req.body);

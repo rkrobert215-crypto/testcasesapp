@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build:vercel-ai-server": "node scripts/build-vercel-ai-server.mjs",
+    "build": "npm run build:vercel-ai-server && vite build",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
