@@ -37,36 +37,5 @@ export default defineConfig(({ mode }) => {
         "@": path.resolve(__dirname, "./src"),
       },
     },
-    build: {
-      rollupOptions: {
-        output: {
-          manualChunks(id) {
-            if (!id.includes("node_modules")) return;
-
-            if (id.includes("xlsx")) return "xlsx";
-            if (id.includes("lucide-react")) return "icons";
-            if (id.includes("@supabase")) return "supabase";
-            if (id.includes("@radix-ui")) return "radix";
-            if (
-              id.includes("react-dom") ||
-              id.includes("react/jsx-runtime") ||
-              id.includes("scheduler") ||
-              /node_modules[\\/]+react[\\/]/.test(id)
-            ) {
-              return "react-vendor";
-            }
-            if (
-              id.includes("@tanstack/react-query") ||
-              id.includes("recharts") ||
-              id.includes("date-fns")
-            ) {
-              return "data-viz";
-            }
-
-            return "vendor";
-          },
-        },
-      },
-    },
   };
 });
