@@ -1,0 +1,13 @@
+{
+  "id": "swag-auth-mfa",
+  "label": "Authentication and MFA Benchmark",
+  "sampleRequirement": "Buyer login should redirect to MFA enrollment when tenant policy is enabled, otherwise continue to portal. Invalid login should show an error message.",
+  "mustCover": [
+    "valid login",
+    "invalid login",
+    "MFA enrollment redirect",
+    "policy on/off behavior",
+    "role-specific flow",
+    "error and guidance messages"
+  ]
+}

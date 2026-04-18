@@ -1,0 +1,13 @@
+{
+  "id": "swag-uploads-exports",
+  "label": "Uploads / Exports Benchmark",
+  "sampleRequirement": "User can upload a CSV by drag and drop, validate format errors, and export the processed results from the list view.",
+  "mustCover": [
+    "drag and drop upload",
+    "valid file upload",
+    "invalid format handling",
+    "error message behavior",
+    "export action availability",
+    "post-upload and post-export reflection"
+  ]
+}

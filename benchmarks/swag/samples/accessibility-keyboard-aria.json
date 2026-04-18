@@ -1,0 +1,16 @@
+{
+  "name": "accessibility-keyboard-aria",
+  "requirementType": "accessibility-and-keyboard",
+  "mustCover": [
+    "keyboard access to major actions",
+    "focus order and focus visibility",
+    "screen-reader label or accessible name",
+    "ARIA or visible-label alignment when relevant",
+    "accessible error messaging",
+    "modal or popup focus trap and return focus"
+  ],
+  "notes": [
+    "Keep accessibility checks explicit when the requirement mentions labels, navigation, modals, or forms.",
+    "Do not hide keyboard and focus behavior inside generic UI testcases."
+  ]
+}

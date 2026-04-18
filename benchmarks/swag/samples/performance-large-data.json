@@ -1,0 +1,16 @@
+{
+  "name": "performance-large-data",
+  "requirementType": "performance-and-volume",
+  "mustCover": [
+    "heavy list or grid load behavior",
+    "large export behavior",
+    "slow response handling",
+    "spinner or loading state quality",
+    "usable behavior under degraded conditions",
+    "filter, search, or pagination usability with large data"
+  ],
+  "notes": [
+    "Keep user-visible performance behavior explicit when volume or slowness is part of the requirement.",
+    "Separate loading-state quality from final data correctness."
+  ]
+}

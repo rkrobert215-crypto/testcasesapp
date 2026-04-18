@@ -1,0 +1,13 @@
+{
+  "id": "swag-forms-crud",
+  "label": "Forms and CRUD Benchmark",
+  "sampleRequirement": "User can create a new item using a form with required fields, save, cancel, duplicate validation, active toggle, and list reflection after create.",
+  "mustCover": [
+    "field validation",
+    "save/cancel behavior",
+    "duplicate handling",
+    "active/inactive state",
+    "list reflection after create",
+    "boundary and whitespace handling"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "responsive-mobile-adaptive",
+  "requirementType": "responsive-mobile",
+  "mustCover": [
+    "desktop vs tablet vs mobile behavior",
+    "overflow or truncation problems",
+    "touch-friendly interaction behavior",
+    "responsive visibility of key actions",
+    "small-screen modal, drawer, or filter behavior",
+    "state persistence across resize or orientation change when relevant"
+  ],
+  "notes": [
+    "Keep mobile-specific behavior separate from desktop-only checks when the risk differs.",
+    "Call out responsive layout and touch issues explicitly."
+  ]
+}

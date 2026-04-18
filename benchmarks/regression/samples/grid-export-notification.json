@@ -1,0 +1,19 @@
+{
+  "id": "RG-003",
+  "requirementType": "grid-export-side-effect",
+  "mustCover": [
+    "grid/list rendering",
+    "sort or filter behavior",
+    "export action availability",
+    "generated export result",
+    "toast or notification feedback",
+    "downstream reflected state",
+    "empty-state or no-data behavior",
+    "permission-based action visibility",
+    "refresh or persistence behavior"
+  ],
+  "mustNotInvent": [
+    "unrelated setup wizard",
+    "invented modal steps that are not part of the requirement"
+  ]
+}

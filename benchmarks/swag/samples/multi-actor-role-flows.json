@@ -1,0 +1,16 @@
+{
+  "name": "multi-actor-role-flows",
+  "requirementType": "role-based-functional-flow",
+  "mustCover": [
+    "actor-specific visibility",
+    "actor-specific execution behavior",
+    "unauthorized actor handling",
+    "role-specific redirect or landing behavior",
+    "shared data reflection across actors",
+    "settings or permission combinations when roles depend on both"
+  ],
+  "notes": [
+    "Do not collapse different actor outcomes into one generic row.",
+    "Use exact role names from the requirement whenever they are provided."
+  ]
+}

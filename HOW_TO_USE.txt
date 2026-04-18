@@ -1,0 +1,185 @@
+HOW TO RUN AND RESTART THIS APP
+================================
+
+Project folder:
+D:\testcases app\twilight-spark-suite-874494d8-main\twilight-spark-suite-874494d8-main
+
+
+1. OPEN THE PROJECT
+-------------------
+
+Open VSCode in this folder.
+
+Open PowerShell in this folder:
+cd "D:\testcases app\twilight-spark-suite-874494d8-main\twilight-spark-suite-874494d8-main"
+
+
+2. START THE LOCAL SERVER
+-------------------------
+
+Run:
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
+
+Then open in Chrome:
+http://localhost:5173
+
+
+2A. AFTER PC RESTART OR SHUTDOWN
+--------------------------------
+
+After you turn your PC on again, do this:
+
+1. Open Docker Desktop
+2. Wait until Docker is fully running
+3. Open this project folder
+4. Double-click:
+   START_FULL_LOCAL.bat
+5. Open in Chrome:
+   http://127.0.0.1:5173
+
+Important:
+- if Docker is not running, the local backend will not work
+- keep the frontend and functions windows open while using the app
+- if localhost does not load, run START_FULL_LOCAL.bat again
+
+
+3. AFTER YOU CHANGE FRONTEND FILES
+----------------------------------
+
+If you edit normal frontend files like:
+- src\components\...
+- src\pages\...
+- src\hooks\...
+- src\lib\...
+
+Vite usually refreshes the browser automatically.
+
+That means:
+- save file in VSCode
+- check Chrome
+- if needed, do a manual refresh
+
+
+4. WHEN YOU NEED TO RESTART THE SERVER
+--------------------------------------
+
+Restart if:
+- the terminal shows errors and the app stops
+- localhost is not loading
+- you changed config files like vite.config.ts
+- hot reload is not picking up changes
+
+To stop the server:
+Press Ctrl + C in the PowerShell terminal
+
+To start again:
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
+
+
+5. IF YOU DO NOT HAVE CODEX ACCESS
+----------------------------------
+
+You can still work normally:
+
+Step 1:
+Edit files in VSCode
+
+Step 2:
+Save the file
+
+Step 3:
+Look at the PowerShell terminal for errors
+
+Step 4:
+Check the browser
+
+Step 5:
+If stuck, stop with Ctrl + C and run:
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
+
+
+6. IMPORTANT DIFFERENCE: FRONTEND VS BACKEND
+--------------------------------------------
+
+Frontend changes:
+- work locally after save
+- usually visible immediately in localhost
+
+Backend changes in:
+supabase\functions\...
+
+These do NOT become live just by restarting Vite.
+
+So remember:
+- frontend change -> save -> refresh/restart local server if needed
+- supabase function change -> restart local Edge Functions
+
+
+7. QUICK TROUBLESHOOTING
+------------------------
+
+Problem:
+localhost page does not open
+
+Do this:
+- confirm the PowerShell terminal is still running
+- restart with Ctrl + C
+- run: npm.cmd run dev -- --host 127.0.0.1 --port 5173
+
+
+Problem:
+frontend changed but browser did not update
+
+Do this:
+- refresh Chrome
+- if still not updated, restart the dev server
+
+
+Problem:
+AI-related feature is not working after changing Supabase function code
+
+Do this:
+- restart local Edge Functions
+- if needed, run START_FULL_LOCAL.bat again
+
+
+8. BUILD CHECK
+--------------
+
+If you want to check whether the frontend compiles:
+npm.cmd run build
+
+
+9. MAIN COMMANDS
+----------------
+
+Start local app:
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
+
+Start full local app after restart:
+START_FULL_LOCAL.bat
+
+Build app:
+npm.cmd run build
+
+Open app:
+http://localhost:5173
+
+
+10. FULL LOCAL SUPABASE / BACKEND SETUP
+---------------------------------------
+
+If you want:
+- local PostgreSQL
+- local Supabase backend
+- local Edge Functions
+
+Read this file in the project root:
+FULL_LOCAL_SUPABASE_SETUP.txt
+
+Easy option:
+- double-click START_FULL_LOCAL.bat
+
+Current local setup note:
+- it starts a lean local Supabase stack without Storage/ImgProxy because this app does not use Supabase Storage and those services were the failing part on this machine
+- AI provider keys are entered in the app UI under AI Settings

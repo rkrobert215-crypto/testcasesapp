@@ -1,0 +1,36 @@
+{
+  "suiteName": "Core prompt regression benchmark",
+  "version": "2026-04-08-v1",
+  "cases": [
+    {
+      "id": "RG-001",
+      "title": "Config-driven Sales Order grouping filters",
+      "preferredModes": [
+        "yuv_style",
+        "professional_standard"
+      ],
+      "sampleFile": "samples/config-driven-sales-order-filters.json",
+      "notes": "Protects exact-term fidelity and prevents drift into invented configuration UI."
+    },
+    {
+      "id": "RG-002",
+      "title": "Tenant-controlled MFA sign-in behavior",
+      "preferredModes": [
+        "rob_style",
+        "professional_standard"
+      ],
+      "sampleFile": "samples/tenant-mfa-signin.json",
+      "notes": "Protects role-aware auth, redirects, visible messages, and tenant-setting combinations."
+    },
+    {
+      "id": "RG-003",
+      "title": "List/grid export and notification flow",
+      "preferredModes": [
+        "swag_style",
+        "yuv_style"
+      ],
+      "sampleFile": "samples/grid-export-notification.json",
+      "notes": "Protects list behavior, export side effects, persistence, and user-visible feedback."
+    }
+  ]
+}

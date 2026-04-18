@@ -1,0 +1,243 @@
+FULL LOCAL SUPABASE + BACKEND SETUP
+===================================
+
+Project folder:
+D:\testcases app\twilight-spark-suite-874494d8-main\twilight-spark-suite-874494d8-main
+
+
+WHAT THIS GIVES YOU
+-------------------
+
+This setup lets you run these parts on your own laptop:
+- frontend
+- Supabase database (PostgreSQL)
+- Supabase auth/api
+- Supabase Edge Functions
+
+This is different from your current setup.
+
+Current setup:
+- frontend = local
+- backend = hosted Supabase cloud
+- database = hosted Supabase cloud
+
+Full local setup:
+- frontend = local
+- backend = local
+- database = local
+
+Note for this project:
+- local startup excludes Supabase Storage and ImgProxy
+- that is intentional because this app does not use Supabase Storage in its current flow
+- excluding them avoids the Windows health-check failure we hit during setup
+
+
+SAFE RULE
+---------
+
+Local Supabase does NOT affect your hosted Supabase project unless you run remote commands like:
+- supabase link
+- supabase secrets set
+- supabase functions deploy
+- supabase db push
+
+So local development is safe if you follow this guide carefully.
+
+
+PART 1: ONE-TIME REQUIREMENTS
+-----------------------------
+
+1. Install Docker Desktop
+   Supabase local stack runs in Docker.
+
+2. Make sure Node.js is installed
+   Your machine already has Node.
+
+3. In PowerShell, open this folder:
+   cd "D:\testcases app\twilight-spark-suite-874494d8-main\twilight-spark-suite-874494d8-main"
+
+4. Check the Supabase CLI through npx:
+   npx.cmd supabase --help
+
+If npx downloads the CLI the first time, that is normal.
+
+Important for this PC:
+- in PowerShell, use npx.cmd instead of npx
+- the npm scripts added to package.json already handle this for the common local commands
+
+
+PART 2: START FULL LOCAL SUPABASE
+---------------------------------
+
+Easiest option:
+Double-click:
+START_FULL_LOCAL.bat
+
+This script will:
+- start local Supabase
+- create .env.local automatically
+- start local Edge Functions
+- start the frontend
+
+Manual option:
+
+1. Start the local Supabase stack:
+   npm.cmd run supabase:start
+
+2. Get the local URLs and keys:
+   npm.cmd run supabase:status
+
+You should see values like:
+- API URL: http://127.0.0.1:54321
+- DB URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+- Studio URL: http://127.0.0.1:54323
+- anon key: ...
+
+
+PART 3: CONNECT THE FRONTEND TO LOCAL SUPABASE
+----------------------------------------------
+
+1. In the project root, create:
+   .env.local
+
+2. Copy from:
+   .env.local.example
+
+3. Put your local values inside .env.local:
+
+   VITE_SUPABASE_URL=http://127.0.0.1:54321
+   VITE_SUPABASE_PUBLISHABLE_KEY=PASTE_YOUR_LOCAL_ANON_KEY_HERE
+
+Important:
+- .env.local is already ignored by git because *.local is ignored
+- do NOT delete your current .env
+- .env.local overrides .env only on your machine
+
+
+PART 4: LOCAL EDGE FUNCTION SECRETS
+-----------------------------------
+
+No local function secrets are required in the current setup.
+
+Your provider API keys are entered in the app UI and stored in browser local storage.
+
+The file below can still exist for future function-only secrets:
+
+supabase\functions\.env.local
+
+
+PART 5: RUN EDGE FUNCTIONS LOCALLY
+----------------------------------
+
+1. Start local function serving:
+   npm.cmd run supabase:functions:serve
+
+2. This serves your functions locally from:
+   http://127.0.0.1:54321/functions/v1/...
+
+3. Your frontend can then talk to local Edge Functions instead of hosted ones.
+
+
+PART 6: RUN THE FRONTEND
+------------------------
+
+1. In another PowerShell terminal:
+   npm.cmd run dev -- --host 127.0.0.1 --port 5173
+
+2. Open:
+   http://localhost:5173
+
+Now your app can run fully local.
+
+
+PART 7: LOCAL DATABASE RESET
+----------------------------
+
+If you want to recreate the local database from migrations:
+
+   npm.cmd run supabase:db:reset
+
+This resets LOCAL database only when you are using the local stack.
+
+Do not use remote options when learning.
+
+
+PART 8: STOP LOCAL SUPABASE
+---------------------------
+
+When you are done:
+
+   npm.cmd run supabase:stop
+
+
+PART 9: GO BACK TO CLOUD MODE
+-----------------------------
+
+If you want to go back to the current cloud backend:
+
+1. Stop local frontend
+2. Stop local functions
+3. Stop local Supabase
+4. Rename or remove:
+   .env.local
+5. Start frontend again:
+   npm.cmd run dev -- --host 127.0.0.1 --port 5173
+
+Then the app uses the hosted values from .env again.
+
+
+PART 10: DEPLOY THE UPDATED BACKEND TO HOSTED SUPABASE
+------------------------------------------------------
+
+This is DIFFERENT from local setup.
+
+Do this only when you want your hosted Supabase backend to use the new code.
+
+Easiest option:
+Double-click:
+DEPLOY_HOSTED_FUNCTIONS.bat
+
+Manual option:
+
+1. Login to Supabase CLI:
+   npx.cmd supabase login
+
+2. Link this repo to your hosted project:
+   npx.cmd supabase link --project-ref cbaorohwkyjswuvjgxlf
+
+3. Deploy each public function with JWT disabled:
+   npx.cmd supabase functions deploy generate-test-cases --no-verify-jwt
+   npx.cmd supabase functions deploy audit-test-cases --no-verify-jwt
+   npx.cmd supabase functions deploy smart-merge-testcases --no-verify-jwt
+   npx.cmd supabase functions deploy validate-coverage --no-verify-jwt
+   npx.cmd supabase functions deploy requirement-analysis --no-verify-jwt
+
+After that, your hosted backend will use:
+- the new multi-provider routing
+- the new Requirement Analysis function
+
+
+PART 11: PROVIDERS YOU CAN USE
+------------------------------
+
+After the updated backend is deployed, you can use:
+- OpenAI
+- Claude
+- Gemini
+- Groq
+
+
+PART 12: OFFICIAL DOCS
+----------------------
+
+Supabase local CLI:
+https://supabase.com/docs/guides/local-development/cli/getting-started
+
+Supabase Edge Functions local development:
+https://supabase.com/docs/guides/functions/development-environment
+
+Supabase Edge Function secrets:
+https://supabase.com/docs/guides/functions/secrets
+
+Supabase CLI deploy reference:
+https://supabase.com/docs/reference/cli/supabase-functions-deploy

@@ -1,0 +1,135 @@
+{
+  "forms-crud": [
+    "required-field validation",
+    "max length and over-limit input",
+    "special characters and whitespace handling",
+    "default values and field states",
+    "save and cancel behavior",
+    "duplicate handling",
+    "read-only or edit-after-create behavior",
+    "data persistence after refresh",
+    "downstream list/detail reflection"
+  ],
+  "list-grid-search-sort-filter": [
+    "default sort",
+    "reverse sort",
+    "search and filter combinations",
+    "empty state",
+    "row click and details navigation",
+    "column or action visibility",
+    "pagination or result-size behavior",
+    "status badge and action state behavior"
+  ],
+  "permissions-rbac": [
+    "with permission",
+    "without permission",
+    "wrong permission",
+    "visibility vs execution",
+    "role-based differences",
+    "permission plus state combinations"
+  ],
+  "settings-feature-flags": [
+    "tenant setting enabled",
+    "tenant setting disabled",
+    "feature flag enabled",
+    "feature flag disabled",
+    "setting plus permission combination",
+    "UI hidden vs visible behavior"
+  ],
+  "auth-mfa-redirects": [
+    "valid login",
+    "invalid login",
+    "redirect target",
+    "MFA or OTP enrollment",
+    "policy or tenant mode on/off",
+    "error, snackbar, or guidance message validation"
+  ],
+  "uploads-downloads-dragdrop": [
+    "valid upload",
+    "invalid upload",
+    "unsupported format",
+    "drag and drop behavior",
+    "download/export action availability",
+    "post-upload or post-export reflection"
+  ],
+  "exports-imports-persistence": [
+    "export button visibility",
+    "correct file generation",
+    "import validation failures",
+    "refresh persistence",
+    "DB or downstream state reflection",
+    "network/API side-effect confirmation when relevant"
+  ],
+  "notifications-emails-sideeffects": [
+    "trigger condition for toast, snackbar, or banner",
+    "email or notification delivery outcome",
+    "non-trigger behavior when conditions are not met",
+    "background job or sync reflection in the UI",
+    "audit trail or reflected downstream state when relevant",
+    "user-visible error or guidance messaging"
+  ],
+  "onboarding-account-setup": [
+    "entry into setup or onboarding flow",
+    "required-field and state validation",
+    "save or apply behavior",
+    "persisted state after refresh",
+    "settings or policy combinations",
+    "downstream reflection in account or feature behavior"
+  ],
+  "multi-actor-role-flows": [
+    "buyer vs supplier behavior",
+    "customer vs reseller behavior",
+    "admin vs user visibility and execution",
+    "role-specific redirect or landing behavior",
+    "shared-data reflection across actors",
+    "unauthorized actor handling"
+  ],
+  "accessibility-keyboard-aria": [
+    "keyboard navigation through interactive elements",
+    "focus order and focus visibility",
+    "screen-reader label or accessible name presence",
+    "ARIA or visible label alignment when relevant",
+    "error message accessibility",
+    "modal, popup, or drawer focus trapping and return focus"
+  ],
+  "responsive-mobile-adaptive": [
+    "desktop vs tablet vs mobile layout behavior",
+    "overflow, clipping, or truncation issues",
+    "touch-friendly interaction behavior",
+    "responsive visibility of key actions or columns",
+    "drawer, modal, or filter behavior on small screens",
+    "state persistence across resize or orientation change when relevant"
+  ],
+  "cross-browser-compatibility": [
+    "Chrome compatibility",
+    "Edge compatibility",
+    "Firefox compatibility",
+    "Safari compatibility",
+    "browser-specific layout or control behavior",
+    "browser-specific download, upload, or date control behavior"
+  ],
+  "concurrency-multi-user": [
+    "same record changed by two users",
+    "stale data handling",
+    "refresh conflict or overwrite behavior",
+    "duplicate click or double submit protection",
+    "locking or conflict message behavior when relevant",
+    "reflected state after concurrent action"
+  ],
+  "performance-large-data": [
+    "heavy list or grid load behavior",
+    "large export behavior",
+    "slow response handling",
+    "spinner or loading state quality",
+    "degraded but usable behavior under load",
+    "pagination, filter, or search usability with large data"
+  ],
+  "api-db-verification": [
+    "request payload validation when relevant",
+    "response handling and user-visible mapping",
+    "retry or failure-handling behavior",
+    "DB persistence and reflected state verification",
+    "rollback or partial-save handling",
+    "duplicate-save protection"
+  ]
+}

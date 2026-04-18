@@ -1,0 +1,13 @@
+{
+  "id": "swag-list-grid",
+  "label": "List/Grid Benchmark",
+  "sampleRequirement": "User can view a vendor list page with sorting, filtering, row click navigation, status badges, and list actions based on permissions.",
+  "mustCover": [
+    "default and reverse sort",
+    "filter/search behavior",
+    "row click and details navigation",
+    "empty state",
+    "status badge visibility",
+    "permission-based list actions"
+  ]
+}

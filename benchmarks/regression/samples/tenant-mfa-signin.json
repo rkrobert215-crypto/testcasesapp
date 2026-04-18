@@ -1,0 +1,19 @@
+{
+  "id": "RG-002",
+  "requirementType": "auth-settings",
+  "mustCover": [
+    "tenant setting on/off behavior",
+    "valid login flow",
+    "MFA required flow",
+    "invalid credentials",
+    "OTP or verification failure",
+    "redirect target",
+    "user-visible error or success message",
+    "role-specific path differences",
+    "non-authorized access behavior"
+  ],
+  "mustNotInvent": [
+    "extra admin screens not present in the story",
+    "API security attack cases unrelated to the requirement"
+  ]
+}

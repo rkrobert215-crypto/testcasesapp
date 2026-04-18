@@ -1,0 +1,16 @@
+{
+  "name": "concurrency-multi-user",
+  "requirementType": "multi-user-concurrency",
+  "mustCover": [
+    "same record changed by two users",
+    "stale data handling",
+    "refresh conflict or overwrite behavior",
+    "duplicate click or double submit protection",
+    "lock or conflict message behavior when relevant",
+    "reflected state after concurrent actions"
+  ],
+  "notes": [
+    "Treat stale data and duplicate submission as separate risks.",
+    "Do not collapse multi-user conflict behavior into a generic save testcase."
+  ]
+}

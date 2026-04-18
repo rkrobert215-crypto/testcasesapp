@@ -1,0 +1,16 @@
+{
+  "name": "cross-browser-compatibility",
+  "requirementType": "browser-compatibility",
+  "mustCover": [
+    "Chrome behavior",
+    "Edge behavior",
+    "Firefox behavior",
+    "Safari behavior",
+    "browser-specific layout or control differences",
+    "browser-specific download, upload, or date control behavior when relevant"
+  ],
+  "notes": [
+    "Only expand this strongly when browser support is a real requirement or risk.",
+    "Keep compatibility checks explicit rather than implied."
+  ]
+}

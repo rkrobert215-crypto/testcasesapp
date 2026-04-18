@@ -1,0 +1,41 @@
+{
+  "name": "SWAG",
+  "version": "2026-04-08-v3",
+  "description": "Separate benchmark pack for broad web-app QA coverage patterns, including onboarding, multi-actor, side-effect, accessibility, responsive, concurrency, performance, and browser-compatibility flows.",
+  "categories": [
+    "forms-crud",
+    "list-grid-search-sort-filter",
+    "permissions-rbac",
+    "settings-feature-flags",
+    "auth-mfa-redirects",
+    "workflow-status-transitions",
+    "uploads-downloads-dragdrop",
+    "exports-imports-persistence",
+    "notifications-emails-sideeffects",
+    "onboarding-account-setup",
+    "multi-actor-role-flows",
+    "accessibility-keyboard-aria",
+    "responsive-mobile-adaptive",
+    "cross-browser-compatibility",
+    "concurrency-multi-user",
+    "performance-large-data",
+    "api-db-verification"
+  ],
+  "sampleFiles": [
+    "samples/forms-crud.json",
+    "samples/list-grid.json",
+    "samples/permissions-rbac.json",
+    "samples/settings-flags.json",
+    "samples/auth-mfa.json",
+    "samples/uploads-exports.json",
+    "samples/notifications-sideeffects.json",
+    "samples/onboarding-account-setup.json",
+    "samples/multi-actor-role-flows.json",
+    "samples/accessibility-keyboard-aria.json",
+    "samples/responsive-mobile-adaptive.json",
+    "samples/cross-browser-compatibility.json",
+    "samples/concurrency-multi-user.json",
+    "samples/performance-large-data.json",
+    "samples/api-db-verification.json"
+  ]
+}

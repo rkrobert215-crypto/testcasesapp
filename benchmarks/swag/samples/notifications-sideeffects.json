@@ -1,0 +1,16 @@
+{
+  "name": "notifications-sideeffects",
+  "requirementType": "notification-email-export",
+  "mustCover": [
+    "trigger condition for the notification or email",
+    "message content or visible confirmation",
+    "non-trigger behavior when conditions are not met",
+    "reflected downstream state after the side effect",
+    "error messaging when the side effect fails",
+    "audit or history visibility when the requirement supports it"
+  ],
+  "notes": [
+    "Keep user-visible outcomes separate from backend-side assumptions.",
+    "Do not hide notification, email, or export reflection inside one generic testcase."
+  ]
+}

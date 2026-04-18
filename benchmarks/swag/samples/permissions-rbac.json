@@ -1,0 +1,13 @@
+{
+  "id": "swag-permissions-rbac",
+  "label": "Permissions and RBAC Benchmark",
+  "sampleRequirement": "User with CAN_MANAGE_REPORTS can export reports, while users without that permission cannot view or execute export actions.",
+  "mustCover": [
+    "with permission",
+    "without permission",
+    "wrong permission",
+    "action visibility",
+    "action execution",
+    "permission plus status/state combinations"
+  ]
+}

@@ -1,0 +1,31 @@
+project_id = "cbaorohwkyjswuvjgxlf"
+
+[functions.generate-test-cases]
+verify_jwt = false
+
+[functions.audit-test-cases]
+verify_jwt = false
+
+[functions.smart-merge-testcases]
+verify_jwt = false
+
+[functions.validate-coverage]
+verify_jwt = false
+
+[functions.requirement-analysis]
+verify_jwt = false
+
+[functions.test-plan]
+verify_jwt = false
+
+[functions.traceability-matrix]
+verify_jwt = false
+
+[functions.test-data-plan]
+verify_jwt = false
+
+[functions.scenario-map]
+verify_jwt = false
+
+[functions.clarification-questions]
+verify_jwt = false

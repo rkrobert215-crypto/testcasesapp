@@ -1,0 +1,33 @@
+{
+  "id": "RG-001",
+  "requirementType": "list-filter-config",
+  "mustPreserveTerms": [
+    "tenant_sales_order_list_settings",
+    "fulfillmentStatusToInclude",
+    "orderListGroupsToInclude",
+    "orderListGroups",
+    "ALL",
+    "textRules",
+    "numericRules"
+  ],
+  "mustCover": [
+    "filter pill rendering",
+    "ALL visibility rules",
+    "configured filter order",
+    "default selected state",
+    "single-select behavior",
+    "multi-select OR behavior",
+    "OR across rules",
+    "AND within a rule",
+    "missing attribute evaluates false",
+    "invalid config entry ignored",
+    "duplicate results not shown",
+    "existing fulfillment-status behavior not regressed"
+  ],
+  "mustNotInvent": [
+    "configuration modal",
+    "add/remove grouping filter workflow",
+    "hierarchical grouping",
+    "generic placeholder groups such as Region or Product Category"
+  ]
+}

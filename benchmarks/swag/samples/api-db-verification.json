@@ -1,0 +1,16 @@
+{
+  "name": "api-db-verification",
+  "requirementType": "api-db-verification",
+  "mustCover": [
+    "request payload validation when relevant",
+    "response handling and user-visible mapping",
+    "retry or failure-handling behavior",
+    "DB persistence and reflected state verification",
+    "rollback or partial-save handling",
+    "duplicate-save protection"
+  ],
+  "notes": [
+    "Focus on user-visible or business-visible effects, not pure developer-only API assertions unless the requirement clearly asks for them.",
+    "Keep rollback and duplicate-save behavior separate when the risk differs."
+  ]
+}

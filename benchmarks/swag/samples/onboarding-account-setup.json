@@ -1,0 +1,16 @@
+{
+  "name": "onboarding-account-setup",
+  "requirementType": "onboarding-settings",
+  "mustCover": [
+    "entry into onboarding or setup flow",
+    "required-field and state validation",
+    "save or apply behavior",
+    "persisted state after refresh",
+    "settings or policy combinations",
+    "downstream reflection in the account or feature behavior"
+  ],
+  "notes": [
+    "Keep configuration combinations explicit when they affect visibility or behavior.",
+    "Treat setup persistence and reflected behavior as separate checks."
+  ]
+}

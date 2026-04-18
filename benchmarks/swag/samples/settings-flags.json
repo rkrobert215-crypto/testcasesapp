@@ -1,0 +1,13 @@
+{
+  "id": "swag-settings-flags",
+  "label": "Settings and Feature Flag Benchmark",
+  "sampleRequirement": "Insights filter is visible only when tenant setting is enabled and the user has one of the required permissions.",
+  "mustCover": [
+    "setting enabled",
+    "setting disabled",
+    "permission present",
+    "permission absent",
+    "setting plus permission combinations",
+    "visible/hidden UI behavior"
+  ]
+}
