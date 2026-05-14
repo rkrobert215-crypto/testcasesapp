@@ -50,3 +50,18 @@ The included `vercel.json` sets the API function max duration for the hosted AI 
 7. Export to Excel.
 
 If a provider fails, check the toast message first. Quota, high-demand, and structured-output provider issues are now surfaced separately.
+
+## Local Chrome With Cloud Backend
+
+To keep the UI on localhost while AI/server work runs on Vercel:
+
+1. Add this to `.env.local`:
+
+```env
+VITE_HOSTED_AI_API_BASE_URL=https://YOUR-VERCEL-APP.vercel.app
+```
+
+2. Restart `npm run dev`.
+3. Open `http://localhost:5173`.
+
+When `VITE_HOSTED_AI_API_BASE_URL` is set, localhost calls `/api/functions/*` on Vercel instead of starting the local AI server.

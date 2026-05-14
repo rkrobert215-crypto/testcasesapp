@@ -29,3 +29,5 @@ tmp_*.xlsx
 vite.config.ts.timestamp-*
 npx
 vite_react_shadcn_ts@0.0.0
+
+.vercel

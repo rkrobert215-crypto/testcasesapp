@@ -71,6 +71,18 @@ function getLocalAiServerTarget(functionName: string): DirectFunctionTarget | nu
     return null;
   }
 
+  const hostedAiBaseUrl = import.meta.env.VITE_HOSTED_AI_API_BASE_URL;
+  if (hostedAiBaseUrl) {
+    try {
+      return {
+        url: new URL(`/api/functions/${functionName}`, hostedAiBaseUrl).toString(),
+        requiresSupabaseAuth: false,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   const baseUrl = import.meta.env.VITE_LOCAL_AI_SERVER_URL || 'http://127.0.0.1:8787';
   if (!baseUrl) {
     return null;
