@@ -1,4 +1,3 @@
-import { supabase } from '@/integrations/supabase/client';
 import { getStoredAiRequestSettings } from '@/lib/aiSettings';
 import { isRetryableAiErrorMessage } from '@/lib/providerErrors';
 
@@ -24,6 +23,7 @@ interface StreamOptions extends RetryOptions {
 interface DirectFunctionTarget {
   url: string;
   requiresSupabaseAuth: boolean;
+  acceptsHostedAccessToken: boolean;
 }
 
 const LOCAL_AI_SERVER_FUNCTIONS = new Set([
@@ -77,6 +77,7 @@ function getLocalAiServerTarget(functionName: string): DirectFunctionTarget | nu
       return {
         url: new URL(`/api/functions/${functionName}`, hostedAiBaseUrl).toString(),
         requiresSupabaseAuth: false,
+        acceptsHostedAccessToken: true,
       };
     } catch {
       return null;
@@ -92,6 +93,7 @@ function getLocalAiServerTarget(functionName: string): DirectFunctionTarget | nu
     return {
       url: new URL(`/functions/v1/${functionName}`, baseUrl).toString(),
       requiresSupabaseAuth: false,
+      acceptsHostedAccessToken: false,
     };
   } catch {
     return null;
@@ -114,10 +116,11 @@ function getHostedAiServerTarget(functionName: string): DirectFunctionTarget | n
   return {
     url: `/api/functions/${functionName}`,
     requiresSupabaseAuth: false,
+    acceptsHostedAccessToken: true,
   };
 }
 
-function buildRequestBody(body: Record<string, unknown>) {
+function buildRequestBody(functionName: string, body: Record<string, unknown>) {
   if (typeof body.aiSettings !== 'undefined') {
     return { ...body };
   }
@@ -130,6 +133,8 @@ function buildRequestBody(body: Record<string, unknown>) {
     ...body,
     aiSettings: getStoredAiRequestSettings({
       includeSecrets: shouldAutoAttachLocalAiSettings(),
+      includeHostedAccessToken:
+        getDirectFunctionTarget(functionName)?.acceptsHostedAccessToken === true,
     }),
   };
 }
@@ -149,6 +154,7 @@ function getDirectFunctionTarget(functionName: string): DirectFunctionTarget | n
     return {
       url: `/api/functions/${functionName}`,
       requiresSupabaseAuth: false,
+      acceptsHostedAccessToken: false,
     };
   }
 
@@ -159,6 +165,7 @@ function getDirectFunctionTarget(functionName: string): DirectFunctionTarget | n
   return {
     url: new URL(`/functions/v1/${functionName}`, import.meta.env.VITE_SUPABASE_URL).toString(),
     requiresSupabaseAuth: true,
+    acceptsHostedAccessToken: false,
   };
 }
 
@@ -221,9 +228,11 @@ async function invokeViaDirectFetch(
         ? String((data as { error?: unknown }).error)
         : `Function request failed with status ${response.status}`;
 
+    const functionError = new Error(errorMessage) as Error & { status?: number };
+    functionError.status = response.status;
     return {
       data: null,
-      error: new Error(errorMessage),
+      error: functionError,
     };
   }
 
@@ -306,7 +315,7 @@ export async function invokeWithStageStream(
   options: StreamOptions = {}
 ) {
   const requestBody = {
-    ...buildRequestBody(body),
+    ...buildRequestBody(functionName, body),
     stream: true,
   };
   const directUrl = getDirectFunctionUrl(functionName);
@@ -355,13 +364,13 @@ export async function invokeWithRetry(
   options: RetryOptions = {}
 ) {
   const { maxRetries = 3, baseDelay = 1000, maxDelay = 10000 } = options;
-  const requestBody = buildRequestBody(body);
+  const requestBody = buildRequestBody(functionName, body);
   const directTarget = getDirectFunctionTarget(functionName);
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const { data, error } = directTarget
       ? await invokeViaDirectFetch(functionName, requestBody)
-      : await supabase.functions.invoke(functionName, { body: requestBody });
+      : await invokeViaSupabase(functionName, requestBody);
 
     if (!error && !data?.error) {
       return data;
@@ -385,4 +394,18 @@ export async function invokeWithRetry(
   }
 
   throw new Error('Max retries exceeded');
+}
+
+async function invokeViaSupabase(functionName: string, requestBody: Record<string, unknown>) {
+  if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY) {
+    return {
+      data: null,
+      error: new Error(
+        'No hosted AI route or Supabase function configuration is available for this deployment.'
+      ),
+    };
+  }
+
+  const { supabase } = await import('@/integrations/supabase/client');
+  return await supabase.functions.invoke(functionName, { body: requestBody });
 }

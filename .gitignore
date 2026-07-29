@@ -25,6 +25,7 @@ dist-ssr
 *.sw?
 __pycache__/
 tmp_*/
+.tmp-tests/
 tmp_*.xlsx
 vite.config.ts.timestamp-*
 npx

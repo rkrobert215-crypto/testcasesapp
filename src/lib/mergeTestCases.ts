@@ -30,5 +30,15 @@ export function getUniqueAdditionalTestCases(existing: TestCase[], additions: Te
 }
 
 export function mergeTestCasesPreservingExisting(existing: TestCase[], additions: TestCase[]) {
-  return [...existing, ...getUniqueAdditionalTestCases(existing, additions)];
+  let nextNumber = existing.reduce((maximum, testCase) => {
+    const match = testCase.id?.match(/(\d+)/);
+    const value = match ? Number(match[1]) : 0;
+    return Number.isFinite(value) ? Math.max(maximum, value) : maximum;
+  }, 0) + 1;
+  const uniqueAdditions = getUniqueAdditionalTestCases(existing, additions).map((testCase) => ({
+    ...testCase,
+    id: `TC_${String(nextNumber++).padStart(3, '0')}`,
+  }));
+
+  return [...existing, ...uniqueAdditions];
 }

@@ -1,7 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { generateStructuredData } from '../supabase/functions/_shared/aiClient.ts';
+import {
+  configureClaudeCliStructuredGenerator,
+  generateStructuredData,
+  isClaudeCliProviderSettings,
+} from '../supabase/functions/_shared/aiClient.ts';
 import {
   analyzeRequirementText,
   type RequirementAnalysisResult,
@@ -31,6 +35,9 @@ import {
   testPlanSchema,
   traceabilityMatrixSchema,
 } from '../supabase/functions/_shared/qaPlanningSchemas.ts';
+import { generateWithClaudeCli } from './claudeCliAdapter.ts';
+
+configureClaudeCliStructuredGenerator(generateWithClaudeCli);
 
 const HOST = process.env.LOCAL_AI_SERVER_HOST || '127.0.0.1';
 const PORT = Number(process.env.LOCAL_AI_SERVER_PORT || 8787);
@@ -803,6 +810,7 @@ async function maybeAnalyzeRequirement(
   input: string
 ): Promise<RequirementAnalysisResult | null> {
   if (!input.trim()) return null;
+  if (isClaudeCliProviderSettings(aiSettings)) return null;
   if (inputType !== 'requirement' && inputType !== 'highlevel' && inputType !== 'scenario') {
     return null;
   }
@@ -813,6 +821,17 @@ async function maybeAnalyzeRequirement(
     console.warn('[local-ai-server] requirement analysis skipped:', error);
     return null;
   }
+}
+
+async function analyzeRequirementForArtifact(
+  aiSettings: unknown,
+  requirement: string,
+  featureName: string
+): Promise<RequirementAnalysisResult | null> {
+  if (!requirement || isClaudeCliProviderSettings(aiSettings)) {
+    return null;
+  }
+  return await analyzeRequirementText(aiSettings, requirement, featureName);
 }
 
 async function callAiProvider(
@@ -839,7 +858,7 @@ async function callAiProvider(
     const errorText = error instanceof Error ? error.message : 'Failed to generate test cases';
     const lower = errorText.toLowerCase();
     const status =
-      lower.includes('rate limit') ? 429 :
+      lower.includes('rate limit') || lower.includes('session limit') || lower.includes('usage limit') ? 429 :
       lower.includes('credit') || lower.includes('payment') ? 402 :
       500;
 
@@ -1053,9 +1072,11 @@ async function handleAuditTestCases(body: Record<string, unknown>) {
     }
   }
 
-  const requirementInsights = requirement
-    ? await analyzeRequirementText(aiSettings, requirement, 'audit-test-cases-analysis')
-    : null;
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    'audit-test-cases-analysis'
+  );
 
   const systemPrompt = `You are a senior QA lead auditing an existing testcase suite.
 
@@ -1387,7 +1408,11 @@ async function handleTestPlan(body: Record<string, unknown>) {
     return cached;
   }
 
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, 'test-plan-analysis');
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    'test-plan-analysis'
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: 'test plan',
@@ -1470,7 +1495,11 @@ async function handleTraceabilityMatrix(body: Record<string, unknown>) {
     return cached;
   }
 
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, 'traceability-matrix-analysis');
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    'traceability-matrix-analysis'
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: 'requirement traceability matrix',
@@ -1542,7 +1571,11 @@ async function handleTestDataPlan(body: Record<string, unknown>) {
     return cached;
   }
 
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, 'test-data-plan-analysis');
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    'test-data-plan-analysis'
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: 'test data plan',
@@ -1610,7 +1643,11 @@ async function handleScenarioMap(body: Record<string, unknown>) {
     return cached;
   }
 
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, 'scenario-map-analysis');
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    'scenario-map-analysis'
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: 'scenario map',
@@ -1677,7 +1714,11 @@ async function handleClarificationQuestions(body: Record<string, unknown>) {
     return cached;
   }
 
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, 'clarification-questions-analysis');
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    'clarification-questions-analysis'
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: 'clarification question set',
@@ -1734,6 +1775,10 @@ export function toProviderFailure(error: unknown): ProviderFailure | null {
   if (typeof error === 'object' && error && 'ok' in error && (error as ProviderFailure).ok === false) {
     const providerError = error as ProviderFailure;
     if (providerError.status === 429) {
+      const lower = providerError.errorText.toLowerCase();
+      if (lower.includes('session limit') || lower.includes('usage limit')) {
+        return { ok: false, status: 429, errorText: providerError.errorText };
+      }
       return { ok: false, status: 429, errorText: 'Rate limit exceeded. Please try again in a moment.' };
     }
     if (providerError.status === 402) {

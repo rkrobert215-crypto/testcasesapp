@@ -1,0 +1,142 @@
+name: Deploy Cloudflare and Claude Lambda
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: testcasesapp-production
+  cancel-in-progress: false
+
+jobs:
+  verify-and-deploy:
+    name: Verify and deploy production
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_REPOSITORY: ${{ secrets.AWS_ECR_REPOSITORY }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      VITE_USE_VERCEL_AI_API: 'true'
+
+    steps:
+      - name: Checkout exact commit
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and boundary tests
+        run: npm test
+
+      - name: Build frontend and AI server
+        run: npm run build
+
+      - name: Configure AWS with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Ensure ECR repository exists
+        shell: bash
+        run: |
+          if ! aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1; then
+            aws ecr create-repository --repository-name "$ECR_REPOSITORY" --image-scanning-configuration scanOnPush=true
+          fi
+          aws ecr put-lifecycle-policy \
+            --repository-name "$ECR_REPOSITORY" \
+            --lifecycle-policy-text '{"rules":[{"rulePriority":1,"description":"Keep three images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":3},"action":{"type":"expire"}}]}'
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push pinned Lambda image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE_URI="$REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}"
+          docker build -f cloud/aws/Dockerfile -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
+
+      - name: Deploy Lambda stack
+        env:
+          LAMBDA_PROXY_TOKEN: ${{ secrets.LAMBDA_PROXY_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          aws cloudformation deploy \
+            --stack-name testcasesapp-claude \
+            --template-file cloud/aws/template.yaml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              ImageUri="$IMAGE_URI" \
+              LambdaProxyToken="$LAMBDA_PROXY_TOKEN" \
+              ClaudeCodeOAuthToken="$CLAUDE_CODE_OAUTH_TOKEN" \
+              OpenAiApiKey="$OPENAI_API_KEY" \
+              AnthropicApiKey="$ANTHROPIC_API_KEY" \
+              GeminiApiKey="$GEMINI_API_KEY" \
+              GroqApiKey="$GROQ_API_KEY" \
+              OpenRouterApiKey="$OPENROUTER_API_KEY"
+          LAMBDA_FUNCTION_URL="$(aws cloudformation describe-stacks \
+            --stack-name testcasesapp-claude \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaFunctionUrl'].OutputValue" \
+            --output text)"
+          echo "LAMBDA_FUNCTION_URL=$LAMBDA_FUNCTION_URL" >> "$GITHUB_ENV"
+
+      - name: Deploy protected Cloudflare Worker and static assets
+        run: npx --yes wrangler@4 deploy
+
+      - name: Configure Cloudflare secrets
+        env:
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          LAMBDA_PROXY_TOKEN: ${{ secrets.LAMBDA_PROXY_TOKEN }}
+        run: |
+          node -e "require('fs').writeFileSync(process.env.RUNNER_TEMP + '/cf-secrets.json', JSON.stringify({APP_USERNAME:process.env.APP_USERNAME,APP_PASSWORD:process.env.APP_PASSWORD,LAMBDA_FUNCTION_URL:process.env.LAMBDA_FUNCTION_URL,LAMBDA_PROXY_TOKEN:process.env.LAMBDA_PROXY_TOKEN}))"
+          npx --yes wrangler@4 secret bulk "$RUNNER_TEMP/cf-secrets.json"
+          rm -f "$RUNNER_TEMP/cf-secrets.json"
+
+      - name: Deploy final Worker version with configured secrets
+        env:
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-final.ndjson
+        run: npx --yes wrangler@4 deploy
+
+      - name: Verify protected health endpoint
+        env:
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-final.ndjson
+        run: |
+          WORKER_URL="$(node scripts/read-wrangler-deployment-url.mjs "$WRANGLER_OUTPUT_FILE_PATH")"
+          curl --fail --silent --show-error --user "$APP_USERNAME:$APP_PASSWORD" "$WORKER_URL/api/health"
+          {
+            echo "### Deployment endpoints"
+            echo "- Cloudflare app: $WORKER_URL"
+            echo "- Protected Lambda upstream: $LAMBDA_FUNCTION_URL"
+            echo "- For Vercel Claude Subscription, set CLAUDE_CLI_LAMBDA_URL to the Lambda upstream and reuse the LAMBDA_PROXY_TOKEN secret."
+          } >> "$GITHUB_STEP_SUMMARY"

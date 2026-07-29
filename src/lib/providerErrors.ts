@@ -11,6 +11,14 @@ function normalizeErrorMessage(error: unknown, fallbackMessage: string) {
 
 export function isRetryableAiErrorMessage(message: string, status?: number) {
   const lower = message.toLowerCase();
+  if (
+    lower.includes('session limit') ||
+    lower.includes('usage limit') ||
+    lower.includes('quota exceeded') ||
+    lower.includes('insufficient_quota')
+  ) {
+    return false;
+  }
   const retryableSignals = [
     'high demand',
     'please try again later',
@@ -34,6 +42,14 @@ export function describeAiError(
 ): AiErrorPresentation {
   const message = normalizeErrorMessage(error, fallbackDescription);
   const lower = message.toLowerCase();
+
+  if (lower.includes('session limit') || lower.includes('usage limit')) {
+    return {
+      title: 'Claude session limit reached',
+      description: message,
+      retryable: false,
+    };
+  }
 
   if (
     lower.includes('api key is not configured') ||

@@ -1,0 +1,13 @@
+.git
+.github
+.env
+.env.*
+dist
+node_modules
+server-dist
+*.xlsx
+*.xls
+*.csv
+*.zip
+*.log
+coverage

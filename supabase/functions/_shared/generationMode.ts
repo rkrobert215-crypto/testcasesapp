@@ -23,7 +23,7 @@ export const GENERATION_MODE_PROFILES: Record<GenerationMode, GenerationModeProf
   rob_style: {
     label: 'Rob',
     generatorPromptLines: [
-      'Keep the suite aligned with Rob-style manual QA writing: clean, permission-aware, actor-based, and easy to review.',
+      'Keep the suite aligned with Rob-style manual QA writing: clean, permission-aware, actor-based, requirement-traceable, and easy to review.',
       'Strongly prefer actor-based testcase titles such as "Verify that the user..." whenever that matches the requirement actor.',
       'Keep authority names exact and visible when permissions drive the scenario.',
       'Write expected results as short, direct, observable outcomes instead of padded prose.',
@@ -32,13 +32,15 @@ export const GENERATION_MODE_PROFILES: Record<GenerationMode, GenerationModeProf
       'When onboarding, account setup, or configuration screens are involved, keep step-by-step role-aware coverage practical and easy to execute.',
       'Use clean module/page names when the feature clearly refers to a specific page, screen, popup, list, or details view.',
       'Keep enterprise fields present, but make them concise, practical, and easy for a working QA team to use.',
-      'Do not compress distinct useful QA checks just to make the output shorter; prefer complete, practical coverage.',
+      'Every generated testcase must trace back to explicit requirement wording, an AC point, a stated permission or role, a stated UI action, or a directly stated user-visible outcome.',
+      'Do not add generic browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin/configuration scenarios unless the requirement explicitly names that obligation.',
+      'Do not compress distinct stated QA checks just to make the output shorter; prefer complete coverage of the stated requirement.',
     ],
     reviewerLines: [
       'Preserve Rob-style actor-based QA wording, especially clear permission-aware testcase titles.',
       'Flag cases that sound robotic, vague, or less precise than a clean senior manual-QA workbook.',
       'Approve only if the suite feels like strong senior-QA work while still sounding natural and crisp.',
-      'Do not over-filter meaningful boundary, validation, navigation, or persistence checks when they add real coverage.',
+      'Flag cases that add unsupported browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin/configuration coverage outside the requirement.',
     ],
     reviewThreshold: 84,
     correctionReminder: 'Keep the suite in a Rob-style QA voice while fixing coverage, naming, and quality gaps with clearer permission-aware titles and sharper expected results.',
@@ -54,7 +56,7 @@ export const GENERATION_MODE_PROFILES: Record<GenerationMode, GenerationModeProf
       'Make permission or authority distinctions explicit when they are part of the real behavior.',
       'Keep expected results short, direct, and immediately observable.',
       'Keep email, export, notification, and downstream-reflection outcomes explicit when they are part of the real flow.',
-      'Prefer complete gap coverage over compressed minimalist additions when the requirement clearly supports more detail.',
+      'Prefer complete stated-requirement gap coverage over compressed minimalist additions, but do not add scenario families unsupported by the requirement.',
     ],
     mergePromptLines: [
       'Preserve the clean tester voice of strong rows instead of over-formalizing everything.',
@@ -333,7 +335,7 @@ export function getGenerationMode(aiSettings: unknown): GenerationMode {
 
 export function isStrictRequirementMode(aiSettings: unknown): boolean {
   const rawSettings = aiSettings && typeof aiSettings === 'object' ? (aiSettings as Record<string, unknown>) : {};
-  return rawSettings.strictRequirementMode === true;
+  return rawSettings.strictRequirementMode !== false;
 }
 
 export function getGenerationModeProfile(generationMode: GenerationMode): GenerationModeProfile {

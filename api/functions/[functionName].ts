@@ -1,3 +1,5 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
+
 export const config = {
   runtime: 'nodejs',
   maxDuration: 300,
@@ -15,6 +17,14 @@ const KNOWN_AI_FUNCTIONS = new Set([
   'scenario-map',
   'clarification-questions',
 ]);
+const API_KEY_FIELDS = [
+  'hostedAccessToken',
+  'openaiApiKey',
+  'claudeApiKey',
+  'geminiApiKey',
+  'groqApiKey',
+  'openrouterApiKey',
+];
 
 interface ProviderFailure {
   ok: false;
@@ -37,52 +47,82 @@ interface VercelResponseLike {
   end: () => void;
 }
 
-export default async function handler(req: VercelRequestLike, res: VercelResponseLike) {
-  setCorsHeaders(res);
+interface HostedServerModule {
+  handleHostedFunctionRequest: (functionName: string, body: Record<string, unknown>) => Promise<unknown>;
+  toProviderFailure: (error: unknown) => ProviderFailure | null;
+}
 
-  if (req.method === 'OPTIONS') {
-    res.status(204).end();
-    return;
-  }
+type LoadHostedServer = () => Promise<HostedServerModule>;
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed.' });
-    return;
-  }
+interface VercelHandlerOptions {
+  environment?: Record<string, string | undefined>;
+  fetchImpl?: FetchLike;
+}
 
-  const functionName = resolveFunctionName(req.query?.functionName);
-  if (!functionName || !KNOWN_AI_FUNCTIONS.has(functionName)) {
-    res.status(404).json({ error: 'Not found.' });
-    return;
-  }
+export function createVercelHandler(
+  loadServer: LoadHostedServer = defaultLoadServer,
+  options: VercelHandlerOptions = {}
+) {
+  const environment = options.environment ?? process.env;
+  const fetchImpl = options.fetchImpl ?? fetch;
 
-  let toProviderFailure:
-    | ((error: unknown) => ProviderFailure | null)
-    | null = null;
+  return async function vercelHandler(req: VercelRequestLike, res: VercelResponseLike) {
+    setCorsHeaders(res);
 
-  try {
-    const serverModule = await import('../../server-dist/generate-test-cases-server.js');
-    toProviderFailure = serverModule.toProviderFailure;
-
-    const body = normalizeBody(req.body);
-    const result = await serverModule.handleHostedFunctionRequest(functionName, body);
-    res.status(200).json(result);
-  } catch (error) {
-    const providerError = toProviderFailure?.(error) ?? null;
-    if (providerError) {
-      res.status(providerError.status).json({ error: providerError.errorText });
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
       return;
     }
 
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    const stack = error instanceof Error ? error.stack : undefined;
+    if (req.method !== 'POST') {
+      res.status(405).json({ error: 'Method not allowed.' });
+      return;
+    }
 
-    res.status(500).json({
-      error: message,
-      ...(stack ? { stack } : {}),
-    });
-  }
+    const functionName = resolveFunctionName(req.query?.functionName);
+    if (!functionName || !KNOWN_AI_FUNCTIONS.has(functionName)) {
+      res.status(404).json({ error: 'Not found.' });
+      return;
+    }
+
+    try {
+      const rawBody = normalizeBody(req.body);
+      const claudeCliRequest = isClaudeCliRequest(rawBody);
+      const authorizationError = authorizeHostedAiRequest(rawBody, environment, claudeCliRequest);
+      if (authorizationError) {
+        res.status(authorizationError.status).json({ error: authorizationError.error });
+        return;
+      }
+
+      const body = stripBrowserSecrets(rawBody);
+      if (claudeCliRequest) {
+        await proxyClaudeCliRequest(functionName, body, res, environment, fetchImpl);
+        return;
+      }
+
+      const serverModule = await loadServer();
+      const result = await serverModule.handleHostedFunctionRequest(functionName, body);
+      res.status(200).json(result);
+    } catch (error) {
+      const serverModule = await loadServer().catch(() => null);
+      const providerError = serverModule?.toProviderFailure(error) ?? null;
+      if (providerError) {
+        res.status(providerError.status).json({ error: providerError.errorText });
+        return;
+      }
+
+      console.error('[vercel-ai] request failed');
+      res.status(500).json({ error: 'The AI service could not complete the request.' });
+    }
+  };
 }
+
+async function defaultLoadServer() {
+  return await import('../../server-dist/generate-test-cases-server.js');
+}
+
+export default createVercelHandler();
 
 function setCorsHeaders(res: VercelResponseLike) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -113,4 +153,131 @@ function normalizeBody(body: unknown): Record<string, unknown> {
   return body && typeof body === 'object' && !Array.isArray(body)
     ? body as Record<string, unknown>
     : {};
+}
+
+function stripBrowserSecrets(body: Record<string, unknown>) {
+  if (!body.aiSettings || typeof body.aiSettings !== 'object' || Array.isArray(body.aiSettings)) {
+    return body;
+  }
+
+  const cleanSettings = { ...(body.aiSettings as Record<string, unknown>) };
+  for (const field of API_KEY_FIELDS) {
+    delete cleanSettings[field];
+  }
+
+  return { ...body, aiSettings: cleanSettings };
+}
+
+function isClaudeCliRequest(body: Record<string, unknown>) {
+  return Boolean(
+    body.aiSettings &&
+      typeof body.aiSettings === 'object' &&
+      !Array.isArray(body.aiSettings) &&
+      (body.aiSettings as Record<string, unknown>).provider === 'claude_cli'
+  );
+}
+
+function authorizeHostedAiRequest(
+  body: Record<string, unknown>,
+  environment: Record<string, string | undefined>,
+  claudeCliRequest: boolean
+): { status: number; error: string } | null {
+  const configuredToken = (environment.HOSTED_AI_ACCESS_TOKEN || '').trim();
+  if (!configuredToken) {
+    return claudeCliRequest
+      ? {
+          status: 503,
+          error:
+            'Hosted AI access is not configured for Claude Subscription. Set HOSTED_AI_ACCESS_TOKEN and redeploy.',
+        }
+      : null;
+  }
+
+  const settings =
+    body.aiSettings && typeof body.aiSettings === 'object' && !Array.isArray(body.aiSettings)
+      ? body.aiSettings as Record<string, unknown>
+      : {};
+  const suppliedToken =
+    typeof settings.hostedAccessToken === 'string' ? settings.hostedAccessToken.trim() : '';
+
+  return constantTimeEqual(suppliedToken, configuredToken)
+    ? null
+    : { status: 401, error: 'Hosted AI access is not authorized.' };
+}
+
+function constantTimeEqual(left: string, right: string) {
+  const leftDigest = createHash('sha256').update(left, 'utf8').digest();
+  const rightDigest = createHash('sha256').update(right, 'utf8').digest();
+  return timingSafeEqual(leftDigest, rightDigest);
+}
+
+async function proxyClaudeCliRequest(
+  functionName: string,
+  body: Record<string, unknown>,
+  res: VercelResponseLike,
+  environment: Record<string, string | undefined>,
+  fetchImpl: FetchLike
+) {
+  const lambdaUrl = (
+    environment.CLAUDE_CLI_LAMBDA_URL ||
+    environment.LAMBDA_FUNCTION_URL ||
+    ''
+  ).trim();
+  const proxyToken = (environment.LAMBDA_PROXY_TOKEN || '').trim();
+
+  if (!lambdaUrl || !proxyToken) {
+    res.status(503).json({
+      error:
+        'Claude Subscription is not configured for this deployment. Configure the protected Claude CLI backend and redeploy.',
+    });
+    return;
+  }
+
+  let upstreamResponse: Response;
+  try {
+    const targetUrl = `${lambdaUrl.replace(/\/+$/, '')}/api/functions/${encodeURIComponent(functionName)}`;
+    upstreamResponse = await fetchImpl(targetUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-Testcase-Proxy-Token': proxyToken,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(285_000),
+    });
+  } catch {
+    res.status(502).json({ error: 'The Claude Subscription service is temporarily unavailable.' });
+    return;
+  }
+
+  const payload = await readUpstreamPayload(upstreamResponse);
+  if (upstreamResponse.ok) {
+    res.status(upstreamResponse.status).json(payload);
+    return;
+  }
+
+  const errorText =
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    typeof (payload as Record<string, unknown>).error === 'string'
+      ? String((payload as Record<string, unknown>).error).slice(0, 800)
+      : 'The Claude Subscription service could not complete the request.';
+  res.status(upstreamResponse.status).json({ error: errorText });
+}
+
+async function readUpstreamPayload(response: Response): Promise<unknown> {
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    return response.ok
+      ? { error: 'The Claude Subscription service returned an invalid response.' }
+      : {};
+  }
 }

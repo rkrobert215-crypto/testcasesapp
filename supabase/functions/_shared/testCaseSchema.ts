@@ -128,7 +128,7 @@ export function normalizeGeneratedTestCases(rawCases: unknown[]): GeneratedTestC
 export function deduplicateGeneratedTestCases(testCases: GeneratedTestCase[]): GeneratedTestCase[] {
   const seen = new Map<string, number>();
 
-  return testCases.filter((testCase) => {
+  const uniqueTestCases = testCases.filter((testCase) => {
     const normalizedTitle = normalizeTitleForComparison(testCase.testCase);
     if (!normalizedTitle) return false;
     if (seen.has(normalizedTitle)) return false;
@@ -144,6 +144,11 @@ export function deduplicateGeneratedTestCases(testCases: GeneratedTestCase[]): G
     seen.set(normalizedTitle, 1);
     return true;
   });
+
+  return uniqueTestCases.map((testCase, index) => ({
+    ...testCase,
+    id: `TC_${String(index + 1).padStart(3, '0')}`,
+  }));
 }
 
 function normalizeString(value: unknown, fallback = ''): string {

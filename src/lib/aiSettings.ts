@@ -1,7 +1,8 @@
-export type AiProvider = 'openai' | 'claude' | 'gemini' | 'groq' | 'openrouter';
+export type AiProvider = 'claude_cli' | 'openai' | 'claude' | 'gemini' | 'groq' | 'openrouter';
 export type GenerationMode = 'rob_style' | 'yuv_style' | 'swag_style' | 'professional_standard';
 export type OpenAiModel = 'gpt-5.4' | 'gpt-5.4-mini';
 export type ClaudeModel = 'claude-sonnet-4-20250514' | 'claude-opus-4-1-20250805';
+export type ClaudeCliModel = 'sonnet' | 'opus' | 'haiku';
 export type OpenRouterModel = string;
 
 export type GeminiModel =
@@ -13,6 +14,7 @@ export interface AiSettings {
   provider: AiProvider;
   generationMode: GenerationMode;
   strictRequirementMode: boolean;
+  hostedAccessToken: string;
   openaiApiKey: string;
   claudeApiKey: string;
   geminiApiKey: string;
@@ -20,6 +22,7 @@ export interface AiSettings {
   openrouterApiKey: string;
   openaiModel: OpenAiModel;
   claudeModel: ClaudeModel;
+  claudeCliModel: ClaudeCliModel;
   geminiModel: GeminiModel;
   openrouterModel: OpenRouterModel;
 }
@@ -48,6 +51,12 @@ export interface ClaudeModelOption {
   description: string;
 }
 
+export interface ClaudeCliModelOption {
+  value: ClaudeCliModel;
+  label: string;
+  description: string;
+}
+
 export interface OpenRouterModelOption {
   value: OpenRouterModel;
   label: string;
@@ -69,8 +78,10 @@ export interface RequestAiSettings {
   provider: AiProvider;
   generationMode: GenerationMode;
   strictRequirementMode: boolean;
+  hostedAccessToken?: string;
   openaiModel: OpenAiModel;
   claudeModel: ClaudeModel;
+  claudeCliModel: ClaudeCliModel;
   geminiModel: GeminiModel;
   openrouterModel: OpenRouterModel;
   openaiApiKey?: string;
@@ -83,9 +94,10 @@ export interface RequestAiSettings {
 export const AI_SETTINGS_STORAGE_KEY = 'testcase-generator-ai-settings';
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
-  provider: 'gemini',
+  provider: 'claude_cli',
   generationMode: 'rob_style',
-  strictRequirementMode: false,
+  strictRequirementMode: true,
+  hostedAccessToken: '',
   openaiApiKey: '',
   claudeApiKey: '',
   geminiApiKey: '',
@@ -93,11 +105,17 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   openrouterApiKey: '',
   openaiModel: 'gpt-5.4',
   claudeModel: 'claude-sonnet-4-20250514',
+  claudeCliModel: 'sonnet',
   geminiModel: 'gemini-2.5-pro',
   openrouterModel: 'openrouter/auto',
 };
 
 export const PROVIDER_OPTIONS: ProviderOption[] = [
+  {
+    value: 'claude_cli',
+    label: 'Claude Subscription',
+    description: 'Uses the secured Claude CLI backend and your Claude Pro/Max subscription quota. No Anthropic API key is entered in the browser.',
+  },
   {
     value: 'openai',
     label: 'OpenAI',
@@ -151,6 +169,24 @@ export const CLAUDE_MODEL_OPTIONS: ClaudeModelOption[] = [
   },
 ];
 
+export const CLAUDE_CLI_MODEL_OPTIONS: ClaudeCliModelOption[] = [
+  {
+    value: 'sonnet',
+    label: 'Claude Sonnet',
+    description: 'Recommended for complete professional QA generation with balanced latency and subscription usage.',
+  },
+  {
+    value: 'opus',
+    label: 'Claude Opus',
+    description: 'Highest reasoning depth, with slower generation and heavier subscription usage.',
+  },
+  {
+    value: 'haiku',
+    label: 'Claude Haiku',
+    description: 'Fastest CLI option for small artifacts; not recommended as the default for complex full-suite generation.',
+  },
+];
+
 export const OPENROUTER_MODEL_OPTIONS: OpenRouterModelOption[] = [
   {
     value: 'openrouter/auto',
@@ -186,7 +222,7 @@ export const GENERATION_MODE_OPTIONS: GenerationModeOption[] = [
   {
     value: 'rob_style',
     label: 'Rob',
-    description: 'Clean permission-aware QA wording with strong "Verify that the user..." titles and crisp expected results.',
+    description: 'Requirement-traceable Rob-style QA wording with exact AC coverage, permission checks, and crisp expected results.',
   },
   {
     value: 'yuv_style',
@@ -206,6 +242,7 @@ export const GENERATION_MODE_OPTIONS: GenerationModeOption[] = [
 ];
 
 export const PROVIDER_MODEL_LABELS: Record<AiProvider, string> = {
+  claude_cli: 'Selectable Claude subscription model',
   openai: 'Selectable GPT-5.4 model',
   claude: 'Selectable Claude 4 model',
   gemini: 'Selectable Gemini model',
@@ -214,7 +251,7 @@ export const PROVIDER_MODEL_LABELS: Record<AiProvider, string> = {
 };
 
 export function normalizeAiSettings(value: unknown): AiSettings {
-  const raw = value && typeof value === 'object' ? (value as Partial<AiSettings> & { provider?: string }) : {};
+  const raw: Record<string, unknown> = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const normalizedOpenAiModel = raw.openaiModel === 'gpt-4.1-mini' ? 'gpt-5.4-mini' : raw.openaiModel;
   const normalizedGeminiModel =
     raw.geminiModel === 'gemini-3.1-flash-lite-preview' ? 'gemini-3-flash-preview' : raw.geminiModel;
@@ -224,9 +261,13 @@ export function normalizeAiSettings(value: unknown): AiSettings {
     provider: isProvider(raw.provider) ? raw.provider : DEFAULT_AI_SETTINGS.provider,
     generationMode: isGenerationMode(normalizedGenerationMode) ? normalizedGenerationMode : DEFAULT_AI_SETTINGS.generationMode,
     strictRequirementMode:
-      typeof raw.strictRequirementMode === 'boolean'
-        ? raw.strictRequirementMode
-        : DEFAULT_AI_SETTINGS.strictRequirementMode,
+      (isGenerationMode(normalizedGenerationMode) ? normalizedGenerationMode : DEFAULT_AI_SETTINGS.generationMode) === 'rob_style'
+        ? true
+        : typeof raw.strictRequirementMode === 'boolean'
+          ? raw.strictRequirementMode
+          : DEFAULT_AI_SETTINGS.strictRequirementMode,
+    hostedAccessToken:
+      typeof raw.hostedAccessToken === 'string' ? raw.hostedAccessToken : DEFAULT_AI_SETTINGS.hostedAccessToken,
     openaiApiKey: typeof raw.openaiApiKey === 'string' ? raw.openaiApiKey : DEFAULT_AI_SETTINGS.openaiApiKey,
     claudeApiKey: typeof raw.claudeApiKey === 'string' ? raw.claudeApiKey : DEFAULT_AI_SETTINGS.claudeApiKey,
     geminiApiKey: typeof raw.geminiApiKey === 'string' ? raw.geminiApiKey : DEFAULT_AI_SETTINGS.geminiApiKey,
@@ -234,6 +275,7 @@ export function normalizeAiSettings(value: unknown): AiSettings {
     openrouterApiKey: typeof raw.openrouterApiKey === 'string' ? raw.openrouterApiKey : DEFAULT_AI_SETTINGS.openrouterApiKey,
     openaiModel: isOpenAiModel(normalizedOpenAiModel) ? normalizedOpenAiModel : DEFAULT_AI_SETTINGS.openaiModel,
     claudeModel: isClaudeModel(raw.claudeModel) ? raw.claudeModel : DEFAULT_AI_SETTINGS.claudeModel,
+    claudeCliModel: isClaudeCliModel(raw.claudeCliModel) ? raw.claudeCliModel : DEFAULT_AI_SETTINGS.claudeCliModel,
     geminiModel: isGeminiModel(normalizedGeminiModel) ? normalizedGeminiModel : DEFAULT_AI_SETTINGS.geminiModel,
     openrouterModel: normalizeOpenRouterModel(raw.openrouterModel),
   };
@@ -245,17 +287,23 @@ export function getStoredAiSettings(): AiSettings {
 
 export function serializeAiSettingsForRequest(
   settings: AiSettings,
-  options: { includeSecrets?: boolean } = {}
+  options: { includeSecrets?: boolean; includeHostedAccessToken?: boolean } = {}
 ): RequestAiSettings {
   const requestSettings: RequestAiSettings = {
     provider: settings.provider,
     generationMode: settings.generationMode,
-    strictRequirementMode: settings.strictRequirementMode,
+    strictRequirementMode: settings.strictRequirementMode || settings.generationMode === 'rob_style',
     openaiModel: settings.openaiModel,
     claudeModel: settings.claudeModel,
+    claudeCliModel: settings.claudeCliModel,
     geminiModel: settings.geminiModel,
     openrouterModel: settings.openrouterModel,
   };
+
+  const hostedAccessToken = settings.hostedAccessToken.trim();
+  if (options.includeHostedAccessToken && hostedAccessToken) {
+    requestSettings.hostedAccessToken = hostedAccessToken;
+  }
 
   if (!options.includeSecrets) {
     return requestSettings;
@@ -271,7 +319,9 @@ export function serializeAiSettingsForRequest(
   };
 }
 
-export function getStoredAiRequestSettings(options: { includeSecrets?: boolean } = {}) {
+export function getStoredAiRequestSettings(
+  options: { includeSecrets?: boolean; includeHostedAccessToken?: boolean } = {}
+) {
   return serializeAiSettingsForRequest(getStoredAiSettings(), options);
 }
 
@@ -321,7 +371,7 @@ export function persistAiSettings(settings: AiSettings) {
 }
 
 function isProvider(value: unknown): value is AiProvider {
-  return value === 'openai' || value === 'claude' || value === 'gemini' || value === 'groq' || value === 'openrouter';
+  return value === 'claude_cli' || value === 'openai' || value === 'claude' || value === 'gemini' || value === 'groq' || value === 'openrouter';
 }
 
 function isGenerationMode(value: unknown): value is GenerationMode {
@@ -329,7 +379,7 @@ function isGenerationMode(value: unknown): value is GenerationMode {
 }
 
 function getAiSettingsMigrationNotices(value: unknown): string[] {
-  const raw = value && typeof value === 'object' ? (value as Partial<AiSettings>) : {};
+  const raw: Record<string, unknown> = value && typeof value === 'object' ? value as Record<string, unknown> : {};
   const notices: string[] = [];
 
   if (raw.openaiModel === 'gpt-4.1-mini') {
@@ -353,6 +403,10 @@ function isOpenAiModel(value: unknown): value is OpenAiModel {
 
 function isClaudeModel(value: unknown): value is ClaudeModel {
   return value === 'claude-sonnet-4-20250514' || value === 'claude-opus-4-1-20250805';
+}
+
+function isClaudeCliModel(value: unknown): value is ClaudeCliModel {
+  return value === 'sonnet' || value === 'opus' || value === 'haiku';
 }
 
 function isGeminiModel(value: unknown): value is GeminiModel {

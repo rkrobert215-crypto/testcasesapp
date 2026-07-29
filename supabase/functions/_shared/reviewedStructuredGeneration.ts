@@ -1,4 +1,4 @@
-import { generateStructuredData } from './aiClient.ts';
+import { generateStructuredData, isClaudeCliProviderSettings } from './aiClient.ts';
 import { isStrictRequirementMode } from './generationMode.ts';
 
 type JsonSchema = Record<string, unknown>;
@@ -73,6 +73,35 @@ export async function generateReviewedStructuredData<T>({
   correctionReminder = 'Raise the artifact to a senior-QA, enterprise-ready standard without changing the requirement scope.',
 }: ReviewedStructuredGenerationOptions<T>): Promise<T> {
   const strictRequirementMode = isStrictRequirementMode(aiSettings);
+
+  if (isClaudeCliProviderSettings(aiSettings)) {
+    return await generateStructuredData<T>({
+      aiSettings,
+      featureName,
+      systemPrompt: [
+        systemPrompt,
+        '',
+        'MANDATORY INTERNAL PRINCIPAL-QA QUALITY GATE:',
+        `1. Privately draft the ${artifactLabel}.`,
+        `2. Privately review it as a principal QA reviewer in 2026 against a minimum approval score of ${reviewThreshold}/100.`,
+        '3. Evaluate traceability, exact requirement fidelity, practical realism, high-risk coverage, prioritization, professional wording, and absence of generic filler.',
+        '4. Reject invented configuration-management UI, setup flows, modal behavior, permissions, integrations, or technical checks that the requirement does not support.',
+        ...(strictRequirementMode
+          ? [
+              '5. Strict exact requirement mode is enabled: preserve exact labels, configuration keys, rule names, logic terms, permissions, and fixed behaviors.',
+              '6. Do not substitute generic examples for exact requirement terms.',
+            ]
+          : []),
+        ...reviewFocusLines.map((line) => `- ${line}`),
+        `7. If the private review is below ${reviewThreshold}, correct every meaningful gap before answering.`,
+        `8. ${correctionReminder}`,
+        'Return only the final corrected artifact matching the requested JSON schema. Do not expose the draft or private review.',
+      ].join('\n'),
+      userParts,
+      output,
+    });
+  }
+
   const firstDraft = await generateStructuredData<T>({
     aiSettings,
     featureName,

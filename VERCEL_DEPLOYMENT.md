@@ -26,6 +26,21 @@ Provider keys, add only what you use:
 - `GROQ_API_KEY`
 - `OPENROUTER_API_KEY`
 
+Hosted access and Claude Subscription backend:
+- `HOSTED_AI_ACCESS_TOKEN` = a unique random app-access token, also entered in the browser under `AI Settings`
+- `CLAUDE_CLI_LAMBDA_URL` = the Function URL output from the AWS Lambda stack
+- `LAMBDA_PROXY_TOKEN` = the same private token configured on that Lambda
+
+`HOSTED_AI_ACCESS_TOKEN` is not an Anthropic key. It prevents anonymous visitors
+from consuming the server-side AI quota. When configured, it protects every
+Vercel AI route, not only Claude Subscription. Keep it different from
+`LAMBDA_PROXY_TOKEN`.
+
+Keep `CLAUDE_CODE_OAUTH_TOKEN` only in AWS Lambda/GitHub Actions. Never add it
+to Vercel or any `VITE_*` variable. Vercel securely proxies Claude Subscription
+requests to Lambda while all other providers continue to run in the Vercel
+Node function.
+
 Optional OpenRouter metadata:
 - `OPENROUTER_HTTP_REFERER`
 - `OPENROUTER_APP_TITLE`
@@ -42,12 +57,13 @@ The included `vercel.json` sets the API function max duration for the hosted AI 
 ## Smoke Test After Deploy
 
 1. Open the `.vercel.app` URL.
-2. Pick a provider in `AI Settings`.
-3. Run `Generate` with a small requirement.
-4. Run `Requirement Analysis`.
-5. Run `Check Coverage`.
-6. Try `Generate Missing Cases`.
-7. Export to Excel.
+2. Open `AI Settings`, enter the `Hosted AI access token`, and pick a provider.
+3. Save the settings.
+4. Run `Generate` with a small requirement.
+5. Run `Requirement Analysis`.
+6. Run `Check Coverage`.
+7. Try `Generate Missing Cases`.
+8. Export to Excel.
 
 If a provider fails, check the toast message first. Quota, high-demand, and structured-output provider issues are now surfaced separately.
 

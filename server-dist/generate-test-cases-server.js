@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 // supabase/functions/_shared/aiClient.ts
 var DEFAULT_SETTINGS = {
-  provider: "gemini",
+  provider: "claude_cli",
   openaiApiKey: "",
   claudeApiKey: "",
   geminiApiKey: "",
@@ -13,17 +13,29 @@ var DEFAULT_SETTINGS = {
   openrouterApiKey: "",
   openaiModel: "gpt-5.4",
   claudeModel: "claude-sonnet-4-20250514",
+  claudeCliModel: "sonnet",
   geminiModel: "gemini-2.5-pro",
   openrouterModel: "openrouter/auto"
 };
 var GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 var PROVIDER_SECRET_ENV_NAMES = {
+  claude_cli: [],
   openai: ["OPENAI_API_KEY"],
   claude: ["ANTHROPIC_API_KEY", "CLAUDE_API_KEY"],
   gemini: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
   groq: ["GROQ_API_KEY"],
   openrouter: ["OPENROUTER_API_KEY"]
 };
+var claudeCliStructuredGenerator = null;
+function configureClaudeCliStructuredGenerator(generator) {
+  claudeCliStructuredGenerator = generator;
+}
+function isClaudeCliProviderSettings(value) {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  return value.provider === "claude_cli";
+}
 var StructuredOutputParseError = class extends Error {
   rawText;
   constructor(message, rawText) {
@@ -46,7 +58,8 @@ async function generateStructuredData({
       settings: normalizedSettings,
       systemPrompt,
       userParts,
-      output
+      output,
+      featureName
     });
   } catch (error) {
     if (isStructuredOutputParseError(error)) {
@@ -56,7 +69,8 @@ async function generateStructuredData({
           settings: normalizedSettings,
           systemPrompt: buildRepairSystemPrompt(systemPrompt, output),
           userParts: buildRepairUserParts(userParts, error),
-          output
+          output,
+          featureName
         });
       } catch (retryError) {
         const providerError2 = toError(retryError);
@@ -81,6 +95,7 @@ function normalizeAiSettings(value) {
     openrouterApiKey: typeof raw.openrouterApiKey === "string" ? raw.openrouterApiKey : DEFAULT_SETTINGS.openrouterApiKey,
     openaiModel: isOpenAiModel(normalizedOpenAiModel) ? normalizedOpenAiModel : DEFAULT_SETTINGS.openaiModel,
     claudeModel: isClaudeModel(raw.claudeModel) ? raw.claudeModel : DEFAULT_SETTINGS.claudeModel,
+    claudeCliModel: isClaudeCliModel(raw.claudeCliModel) ? raw.claudeCliModel : DEFAULT_SETTINGS.claudeCliModel,
     geminiModel: isGeminiModel(raw.geminiModel) ? raw.geminiModel : DEFAULT_SETTINGS.geminiModel,
     openrouterModel: normalizeOpenRouterModel(raw.openrouterModel)
   };
@@ -90,9 +105,23 @@ async function callProvider({
   settings,
   systemPrompt,
   userParts,
-  output
+  output,
+  featureName
 }) {
   switch (provider) {
+    case "claude_cli":
+      if (!claudeCliStructuredGenerator) {
+        throw new Error(
+          "Claude Subscription is available only through the Node server with Claude CLI configured. Select another provider for Supabase Edge Functions."
+        );
+      }
+      return await claudeCliStructuredGenerator({
+        model: settings.claudeCliModel,
+        systemPrompt,
+        userParts,
+        output,
+        featureName
+      });
     case "openai":
       return await callOpenAiCompatibleTool({
         url: "https://api.openai.com/v1/chat/completions",
@@ -489,13 +518,16 @@ function shouldRetryOpenRouterWithAuto(model, error) {
   return message.includes("no structured data") || message.includes("valid json") || message.includes("tool arguments") || message.includes("failed to call a function") || message.includes("failed_generation");
 }
 function isProvider(value) {
-  return value === "openai" || value === "claude" || value === "gemini" || value === "groq" || value === "openrouter";
+  return value === "claude_cli" || value === "openai" || value === "claude" || value === "gemini" || value === "groq" || value === "openrouter";
 }
 function isOpenAiModel(value) {
   return value === "gpt-5.4" || value === "gpt-5.4-mini";
 }
 function isClaudeModel(value) {
   return value === "claude-sonnet-4-20250514" || value === "claude-opus-4-1-20250805";
+}
+function isClaudeCliModel(value) {
+  return value === "sonnet" || value === "opus" || value === "haiku";
 }
 function isGeminiModel(value) {
   return value === "gemini-2.5-flash" || value === "gemini-2.5-pro" || value === "gemini-3-flash-preview";
@@ -526,7 +558,7 @@ var GENERATION_MODE_PROFILES = {
   rob_style: {
     label: "Rob",
     generatorPromptLines: [
-      "Keep the suite aligned with Rob-style manual QA writing: clean, permission-aware, actor-based, and easy to review.",
+      "Keep the suite aligned with Rob-style manual QA writing: clean, permission-aware, actor-based, requirement-traceable, and easy to review.",
       'Strongly prefer actor-based testcase titles such as "Verify that the user..." whenever that matches the requirement actor.',
       "Keep authority names exact and visible when permissions drive the scenario.",
       "Write expected results as short, direct, observable outcomes instead of padded prose.",
@@ -535,13 +567,15 @@ var GENERATION_MODE_PROFILES = {
       "When onboarding, account setup, or configuration screens are involved, keep step-by-step role-aware coverage practical and easy to execute.",
       "Use clean module/page names when the feature clearly refers to a specific page, screen, popup, list, or details view.",
       "Keep enterprise fields present, but make them concise, practical, and easy for a working QA team to use.",
-      "Do not compress distinct useful QA checks just to make the output shorter; prefer complete, practical coverage."
+      "Every generated testcase must trace back to explicit requirement wording, an AC point, a stated permission or role, a stated UI action, or a directly stated user-visible outcome.",
+      "Do not add generic browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin/configuration scenarios unless the requirement explicitly names that obligation.",
+      "Do not compress distinct stated QA checks just to make the output shorter; prefer complete coverage of the stated requirement."
     ],
     reviewerLines: [
       "Preserve Rob-style actor-based QA wording, especially clear permission-aware testcase titles.",
       "Flag cases that sound robotic, vague, or less precise than a clean senior manual-QA workbook.",
       "Approve only if the suite feels like strong senior-QA work while still sounding natural and crisp.",
-      "Do not over-filter meaningful boundary, validation, navigation, or persistence checks when they add real coverage."
+      "Flag cases that add unsupported browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin/configuration coverage outside the requirement."
     ],
     reviewThreshold: 84,
     correctionReminder: "Keep the suite in a Rob-style QA voice while fixing coverage, naming, and quality gaps with clearer permission-aware titles and sharper expected results.",
@@ -557,7 +591,7 @@ var GENERATION_MODE_PROFILES = {
       "Make permission or authority distinctions explicit when they are part of the real behavior.",
       "Keep expected results short, direct, and immediately observable.",
       "Keep email, export, notification, and downstream-reflection outcomes explicit when they are part of the real flow.",
-      "Prefer complete gap coverage over compressed minimalist additions when the requirement clearly supports more detail."
+      "Prefer complete stated-requirement gap coverage over compressed minimalist additions, but do not add scenario families unsupported by the requirement."
     ],
     mergePromptLines: [
       "Preserve the clean tester voice of strong rows instead of over-formalizing everything.",
@@ -834,7 +868,7 @@ function getGenerationMode(aiSettings) {
 }
 function isStrictRequirementMode(aiSettings) {
   const rawSettings = aiSettings && typeof aiSettings === "object" ? aiSettings : {};
-  return rawSettings.strictRequirementMode === true;
+  return rawSettings.strictRequirementMode !== false;
 }
 function getGenerationModeProfile(generationMode) {
   return GENERATION_MODE_PROFILES[generationMode] || GENERATION_MODE_PROFILES[DEFAULT_GENERATION_MODE];
@@ -874,6 +908,31 @@ async function generateReviewedStructuredData({
   correctionReminder = "Raise the artifact to a senior-QA, enterprise-ready standard without changing the requirement scope."
 }) {
   const strictRequirementMode = isStrictRequirementMode(aiSettings);
+  if (isClaudeCliProviderSettings(aiSettings)) {
+    return await generateStructuredData({
+      aiSettings,
+      featureName,
+      systemPrompt: [
+        systemPrompt,
+        "",
+        "MANDATORY INTERNAL PRINCIPAL-QA QUALITY GATE:",
+        `1. Privately draft the ${artifactLabel}.`,
+        `2. Privately review it as a principal QA reviewer in 2026 against a minimum approval score of ${reviewThreshold}/100.`,
+        "3. Evaluate traceability, exact requirement fidelity, practical realism, high-risk coverage, prioritization, professional wording, and absence of generic filler.",
+        "4. Reject invented configuration-management UI, setup flows, modal behavior, permissions, integrations, or technical checks that the requirement does not support.",
+        ...strictRequirementMode ? [
+          "5. Strict exact requirement mode is enabled: preserve exact labels, configuration keys, rule names, logic terms, permissions, and fixed behaviors.",
+          "6. Do not substitute generic examples for exact requirement terms."
+        ] : [],
+        ...reviewFocusLines.map((line) => `- ${line}`),
+        `7. If the private review is below ${reviewThreshold}, correct every meaningful gap before answering.`,
+        `8. ${correctionReminder}`,
+        "Return only the final corrected artifact matching the requested JSON schema. Do not expose the draft or private review."
+      ].join("\n"),
+      userParts,
+      output
+    });
+  }
   const firstDraft = await generateStructuredData({
     aiSettings,
     featureName,
@@ -1297,7 +1356,7 @@ function normalizeGeneratedTestCases(rawCases) {
 }
 function deduplicateGeneratedTestCases(testCases) {
   const seen = /* @__PURE__ */ new Map();
-  return testCases.filter((testCase) => {
+  const uniqueTestCases = testCases.filter((testCase) => {
     const normalizedTitle = normalizeTitleForComparison(testCase.testCase);
     if (!normalizedTitle) return false;
     if (seen.has(normalizedTitle)) return false;
@@ -1311,6 +1370,10 @@ function deduplicateGeneratedTestCases(testCases) {
     seen.set(normalizedTitle, 1);
     return true;
   });
+  return uniqueTestCases.map((testCase, index) => ({
+    ...testCase,
+    id: `TC_${String(index + 1).padStart(3, "0")}`
+  }));
 }
 function normalizeString(value, fallback = "") {
   return String(value ?? fallback).trim();
@@ -1323,7 +1386,7 @@ function normalizeTitleForComparison(value) {
 }
 
 // supabase/functions/_shared/generateTestCasePipeline.ts
-var GENERATE_CACHE_VERSION = "generate-test-cases-2026-04-08-v8";
+var GENERATE_CACHE_VERSION = "generate-test-cases-2026-05-24-v9";
 var INPUT_TYPE_PROMPTS = {
   requirement: `You are a senior QA engineer with 15+ years of manual testing experience.
 
@@ -1385,22 +1448,28 @@ function buildSystemPrompt(inputType, generationMode, strictRequirementMode) {
     INPUT_TYPE_PROMPTS[inputType] || INPUT_TYPE_PROMPTS.requirement,
     "",
     `GENERATION STYLE MODE: ${profile.label}`,
-    ...profile.generatorPromptLines.map((line) => `- ${line}`),
-    "- Think like a strong senior manual QA who separates meaningful validation, boundary, navigation, persistence, permission, and downstream-impact checks instead of collapsing them into a tiny suite.",
-    "- Prefer fuller practical coverage for form-based and CRUD flows when the requirement supports it.",
-    "- When list, table, grid, search, filter, sort, page, or details-view behavior is present, cover those user-visible behaviors explicitly instead of assuming they are implied.",
-    "- When permissions or authorities are present, keep permission-pair coverage explicit and exact instead of hiding it inside broad generic rows.",
-    "- When tenant settings, feature flags, enabled/disabled states, or policy toggles drive behavior, cover those state combinations explicitly.",
-    "- When login, MFA, OTP, authentication, redirect, or enrollment behavior is present, cover redirect targets, visible messages, and role-specific flows explicitly.",
-    "- When onboarding, account setup, customer/supplier/buyer/reseller actors, notifications, emails, exports, or API/network-driven side effects are present, keep those scenario clusters explicit instead of implied.",
-    "- When a requirement is medium or large, favor a broad realistic suite over a compressed minimalist suite."
+    ...profile.generatorPromptLines.map((line) => `- ${line}`)
   ];
   if (strictRequirementMode) {
     lines.push(
-      "- STRICT EXACT REQUIREMENT MODE is enabled.",
-      "- Stay tightly anchored to the stated requirement, acceptance criteria, labels, config keys, rule names, and fixed logic terms.",
-      "- Do not invent derived UI/setup/configuration flows unless they are an immediate tester-level extension of a stated behavior.",
-      "- When the requirement contains exact labels, config keys, or logic names, preserve them throughout the suite instead of replacing them with generic examples."
+      "- STRICT REQUIREMENT-TRACEABLE MODE is enabled.",
+      "- Treat the requirement text as the boundary of the testcase suite.",
+      "- Every testcase must map to explicit requirement wording, an acceptance-criteria point, a stated permission or role, a stated UI action/state, a stated validation or blocked path, or a directly stated user-visible side effect.",
+      "- Cover positive, negative, functional, UI, permission, and edge cases only where those categories are supported by the requirement.",
+      "- Do not add browser, responsive, performance, concurrency, accessibility, security, API/DB, or configuration-admin scenarios unless the requirement explicitly names that obligation.",
+      "- If the requirement limits an action to eligible departments, locations, groups, devices, statuses, roles, or permissions, test those constraints exactly and do not generalize them.",
+      "- Preserve exact labels, authority names, config keys, rule names, popup names, and fixed logic terms throughout the suite."
+    );
+  } else {
+    lines.push(
+      "- Think like a strong senior manual QA who separates meaningful validation, boundary, navigation, persistence, permission, and downstream-impact checks instead of collapsing them into a tiny suite.",
+      "- Prefer fuller practical coverage for form-based and CRUD flows when the requirement supports it.",
+      "- When list, table, grid, search, filter, sort, page, or details-view behavior is present, cover those user-visible behaviors explicitly instead of assuming they are implied.",
+      "- When permissions or authorities are present, keep permission-pair coverage explicit and exact instead of hiding it inside broad generic rows.",
+      "- When tenant settings, feature flags, enabled/disabled states, or policy toggles drive behavior, cover those state combinations explicitly.",
+      "- When login, MFA, OTP, authentication, redirect, or enrollment behavior is present, cover redirect targets, visible messages, and role-specific flows explicitly.",
+      "- When onboarding, account setup, customer/supplier/buyer/reseller actors, notifications, emails, exports, or API/network-driven side effects are present, keep those scenario clusters explicit instead of implied.",
+      "- When a requirement is medium or large, favor a broad realistic suite over a compressed minimalist suite."
     );
   }
   return lines.join("\n");
@@ -1907,20 +1976,32 @@ function detectPrimaryAction(input) {
   }
   return null;
 }
-function estimateMinimumTestCases(inputType, input, insights) {
+function estimateMinimumTestCases(inputType, input, insights, strictRequirementMode = false) {
   if (inputType === "highlevel") {
     return Math.max(10, Math.min(20, (insights?.acceptanceCriteria.length ?? 0) * 2 || 10));
   }
   if (inputType === "testcase" || inputType === "expected") {
     return 1;
   }
-  const bulletRegex = /^\s*[-*•]\s|^\s*\d+[.)]\s/;
+  const bulletRegex = /^\s*[-*\u2022]\s|^\s*\d+[.)]\s/;
   const normalizedInput = input.replaceAll("\u2022", "-");
   const bulletLines = normalizedInput.split("\n").filter((line) => bulletRegex.test(line)).length;
   const paragraphCount = input.split(/\n\s*\n/).filter((paragraph) => paragraph.trim().length > 0).length;
   const acCount = insights?.acceptanceCriteria.length ?? 0;
+  const authorityCount = extractAuthorities(input).length;
+  if (strictRequirementMode) {
+    const explicitPointCount = Math.max(acCount, bulletLines, paragraphCount);
+    let baseline2 = explicitPointCount > 0 ? Math.max(6, Math.min(48, explicitPointCount * 2)) : 8;
+    if (input.length > 1200) baseline2 = Math.max(baseline2, 12);
+    if (input.length > 2200) baseline2 = Math.max(baseline2, 18);
+    if (authorityCount > 0) baseline2 = Math.max(baseline2, Math.min(36, 6 + authorityCount * 3));
+    if (isConfigDrivenFilterRequirement(input, insights)) {
+      baseline2 = Math.max(baseline2, Math.min(40, 10 + explicitPointCount * 2));
+    }
+    return baseline2;
+  }
   const formLike = isFormLikeRequirement(input, insights);
-  const hasAuthorities = extractAuthorities(input).length > 0;
+  const hasAuthorities = authorityCount > 0;
   const listLike = isListLikeRequirement(input, insights);
   const onboardingLike = isOnboardingLikeRequirement(input, insights);
   const sideEffectLike = isSideEffectRequirement(input, insights);
@@ -1957,7 +2038,7 @@ function validateGeneratedCases(inputType, input, testCases, insights, strictReq
     violations.push("No test cases were generated.");
     return { valid: false, violations };
   }
-  const minimum = estimateMinimumTestCases(inputType, input, insights);
+  const minimum = estimateMinimumTestCases(inputType, input, insights, strictRequirementMode);
   if (testCases.length < minimum) {
     violations.push(`Generated only ${testCases.length} test cases, expected at least ${minimum} for this requirement size.`);
   }
@@ -2023,6 +2104,14 @@ function validateGeneratedCases(inputType, input, testCases, insights, strictReq
       violations.push("Generated suite dropped too many exact requirement terms/labels and appears to be drifting into generic coverage.");
     }
   }
+  if (strictRequirementMode) {
+    const lowerInput = input.toLowerCase();
+    const lowerCombined = combinedText.toLowerCase();
+    const inventedStrictTopics = STRICT_UNSUPPORTED_TOPICS.filter((topic) => topic.generated.some((term) => containsStrictTopicTerm(lowerCombined, term))).filter((topic) => !topic.required.some((term) => containsStrictTopicTerm(lowerInput, term))).map((topic) => topic.label);
+    if (inventedStrictTopics.length > 0) {
+      violations.push(`Strict mode suite added unsupported scenario categories: ${inventedStrictTopics.join(", ")}.`);
+    }
+  }
   if (isConfigDrivenFilterRequirement(input, insights)) {
     const lowerCombined = combinedText.toLowerCase();
     const inventedUiSignals = [
@@ -2052,6 +2141,43 @@ function validateGeneratedCases(inputType, input, testCases, insights, strictReq
   }
   return { valid: violations.length === 0, violations };
 }
+var STRICT_UNSUPPORTED_TOPICS = [
+  { label: "cross-browser compatibility", generated: ["cross-browser", "browser compatibility"], required: ["cross-browser", "browser compatibility"] },
+  { label: "responsive/mobile coverage", generated: ["responsive", "mobile layout", "tablet", "touch behavior"], required: ["responsive", "mobile", "tablet", "touch"] },
+  { label: "performance/load coverage", generated: ["performance", "load time", "large-data", "large data", "slow response"], required: ["performance", "load time", "large data", "slow response"] },
+  { label: "concurrency coverage", generated: ["concurrency", "multi-user", "stale data", "duplicate submit"], required: ["concurrency", "multi-user", "stale data", "duplicate submit"] },
+  { label: "accessibility coverage", generated: ["accessibility", "aria", "screen reader", "keyboard navigation", "focus order"], required: ["accessibility", "aria", "screen reader", "keyboard", "focus"] },
+  { label: "API/DB verification", generated: ["api response", "api payload", "database", "db verification", "rollback"], required: ["api response", "api payload", "database", "db verification", "rollback"] },
+  { label: "generic CRUD boundary coverage", generated: ["breadcrumb", "tab order", "special character", "max length", "maximum length", "over-limit", "leading/trailing spaces"], required: ["breadcrumb", "tab order", "special character", "max length", "maximum length", "over-limit", "leading/trailing spaces"] },
+  {
+    label: "unstated list capabilities",
+    generated: ["sort the ", "sorting", "pagination", "list columns", "existing search", "search functionality"],
+    required: ["sort", "sorting", "pagination", "column", "search"]
+  }
+];
+function containsStrictTopicTerm(text, term) {
+  if (!/^[a-z0-9]+$/i.test(term)) {
+    return text.includes(term);
+  }
+  const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`\\b${escapedTerm}\\b`, "i").test(text);
+}
+function removeUnsupportedStrictTestCases(input, testCases, strictRequirementMode) {
+  if (!strictRequirementMode) {
+    return testCases;
+  }
+  const lowerInput = input.toLowerCase();
+  const unsupportedTopics = STRICT_UNSUPPORTED_TOPICS.filter(
+    (topic) => !topic.required.some((term) => containsStrictTopicTerm(lowerInput, term))
+  );
+  const filtered = testCases.filter((testCase) => {
+    const lowerTestCase = JSON.stringify(testCase).toLowerCase();
+    return !unsupportedTopics.some(
+      (topic) => topic.generated.some((term) => containsStrictTopicTerm(lowerTestCase, term))
+    );
+  });
+  return deduplicateGeneratedTestCases(filtered);
+}
 function buildInsightSummary(insights) {
   if (!insights) return "";
   const acceptanceCriteriaLines = insights.acceptanceCriteria.map(
@@ -2079,23 +2205,24 @@ How to test: ${point.howToTest.join(" | ")}`
 function buildInstructionText(input, images, inputType, insights, generationMode, strictRequirementMode) {
   const profile = getGenerationModeProfile(generationMode);
   const preferredStarter = insights?.recommendedStarter || "Verify that the user";
+  const broadChecklistEnabled = !strictRequirementMode;
   const formLike = isFormLikeRequirement(input, insights);
   const listLike = isListLikeRequirement(input, insights);
-  const listCoverageChecklist = buildListCoverageChecklist(input, insights);
+  const listCoverageChecklist = broadChecklistEnabled ? buildListCoverageChecklist(input, insights) : [];
   const authorityCoverageChecklist = buildAuthorityCoverageChecklist(input);
   const configCoverageChecklist = buildConfigCoverageChecklist(input, insights);
-  const authCoverageChecklist = buildAuthCoverageChecklist(input, insights);
+  const authCoverageChecklist = broadChecklistEnabled ? buildAuthCoverageChecklist(input, insights) : [];
   const sideEffectCoverageChecklist = buildSideEffectCoverageChecklist(input, insights);
-  const onboardingCoverageChecklist = buildOnboardingCoverageChecklist(input, insights);
+  const onboardingCoverageChecklist = broadChecklistEnabled ? buildOnboardingCoverageChecklist(input, insights) : [];
   const multiActorCoverageChecklist = buildMultiActorCoverageChecklist(input, insights);
   const requirementFidelityChecklist = buildRequirementFidelityChecklist(input, strictRequirementMode);
   const configDrivenFilterChecklist = buildConfigDrivenFilterChecklist(input, insights, strictRequirementMode);
-  const accessibilityCoverageChecklist = buildAccessibilityCoverageChecklist(input, insights);
-  const responsiveCoverageChecklist = buildResponsiveCoverageChecklist(input, insights);
-  const browserCoverageChecklist = buildBrowserCompatibilityChecklist(input, insights);
-  const concurrencyCoverageChecklist = buildConcurrencyCoverageChecklist(input, insights);
-  const performanceCoverageChecklist = buildPerformanceCoverageChecklist(input, insights);
-  const apiDbCoverageChecklist = buildApiDbCoverageChecklist(input, insights);
+  const accessibilityCoverageChecklist = broadChecklistEnabled ? buildAccessibilityCoverageChecklist(input, insights) : [];
+  const responsiveCoverageChecklist = broadChecklistEnabled ? buildResponsiveCoverageChecklist(input, insights) : [];
+  const browserCoverageChecklist = broadChecklistEnabled ? buildBrowserCompatibilityChecklist(input, insights) : [];
+  const concurrencyCoverageChecklist = broadChecklistEnabled ? buildConcurrencyCoverageChecklist(input, insights) : [];
+  const performanceCoverageChecklist = broadChecklistEnabled ? buildPerformanceCoverageChecklist(input, insights) : [];
+  const apiDbCoverageChecklist = broadChecklistEnabled ? buildApiDbCoverageChecklist(input, insights) : [];
   const lines = [
     "Generate enterprise-quality test cases in structured form.",
     "Return the complete testcase suite with these exact fields for every row: id, requirementReference, module, priority, coverageArea, scenario, testCase, testData, preconditions, testSteps, expectedResult, postCondition, type.",
@@ -2106,31 +2233,39 @@ function buildInstructionText(input, images, inputType, insights, generationMode
     "",
     "MANDATORY OUTPUT QUALITY RULES:",
     "- Read every line of the requirement and map each acceptance criteria point to one or more test cases.",
-    "- Include both Positive and Negative scenarios where appropriate.",
-    "- Do not invent roles, authorities, statuses, or features that are not in the requirement.",
+    "- Every testcase must be traceable to explicit requirement text, an AC point, a stated permission/role, a stated UI action/state, a stated validation/negative path, or a directly stated user-visible outcome.",
+    "- Include both Positive and Negative scenarios where the requirement supports success and blocked, invalid, unauthorized, or error outcomes.",
+    "- Do not invent roles, authorities, statuses, labels, screens, settings, or features that are not in the requirement.",
     "- Make the suite read like a senior QA deliverable, not generic AI output.",
     "- Use clean module, page, modal, popup, list, or details-view names instead of vague generic labels whenever the requirement supports a clearer name.",
     "- Use practical business modules, priority, test data, and post-condition fields.",
     "- requirementReference must point to AC IDs or derived requirement IDs such as AC-01 or REQ-03.",
     "- For standard functional cases, prefer the recommended actor-based starter phrase from requirement analysis.",
-    "- Do not compress distinct meaningful checks into one case when a senior QA would keep them separate.",
-    "- Include practical derived coverage beyond explicit AC wording when it is a natural manual-testing extension of the requirement.",
-    "- If a requirement supports additional realistic field-validation or UI-behavior coverage, include it instead of stopping at the minimum explicit AC count.",
+    "- Do not compress distinct stated checks into one case when a senior QA would keep them separate.",
     "- Expected results should usually be short, direct, and observable. Prefer clean execution-ready outcomes over long padded paragraphs.",
-    "- When settings, permissions, roles, or statuses combine to change behavior, keep those combinations explicit if they create different real outcomes.",
+    "- When settings, permissions, roles, or statuses combine to change stated behavior, keep those combinations explicit if they create different real outcomes.",
     "- When exports, notifications, emails, downloads, API/network-driven updates, or downstream reflection are part of the requirement, make those side effects explicit.",
-    "- When onboarding, account setup, or multi-actor behavior is present, keep role-specific and persisted-state coverage explicit.",
-    "- When accessibility, responsive/mobile, concurrency, performance, or browser support is part of the requirement, keep those obligations explicit instead of implied.",
-    "- When API or DB verification is part of the requirement, keep request/response, persistence, retry/failure, and rollback behavior explicit when relevant.",
     "- When a requirement contains exact labels, config keys, rule terms, or fixed values, preserve those exact terms in the suite instead of replacing them with generic examples.",
-    "- Do not invent a separate admin/configuration screen, modal, setup workflow, or settings editor unless the requirement explicitly describes one."
+    "- Do not invent a separate admin/configuration screen, modal, setup workflow, or settings editor unless the requirement explicitly describes one.",
+    "- Remove semantic duplicates and summary rows that merely repeat already-covered setup, action, and outcome; retain every distinct risk and requirement behavior."
   ];
   if (strictRequirementMode) {
     lines.push(
-      "- STRICT EXACT REQUIREMENT MODE is enabled for this run.",
+      "- STRICT REQUIREMENT-TRACEABLE MODE is enabled for this run.",
       "- Stay tightly anchored to the stated requirement and acceptance-criteria wording.",
+      "- Add positive, negative, UI, functional, permission, and edge cases only when each case is grounded in the requirement text.",
+      "- Do not add generic CRUD, browser, responsive, accessibility, performance, concurrency, security, API/DB, or cross-platform coverage just because it is common QA practice.",
       "- Prefer exact behavior fidelity over broad inferred expansion when those two goals conflict.",
-      "- Do not rename exact labels, config keys, rule terms, or fixed filter values into generic business examples."
+      "- If an action is allowed only for an eligible department, location, group, device, permission, or status, keep the testcase wording conditional and exact.",
+      "- Do not rename exact labels, config keys, rule terms, popup names, or fixed filter values into generic business examples."
+    );
+  } else {
+    lines.push(
+      "- Include practical derived coverage beyond explicit AC wording when it is a natural manual-testing extension of the requirement.",
+      "- If a requirement supports additional realistic field-validation or UI-behavior coverage, include it instead of stopping at the minimum explicit AC count.",
+      "- When onboarding, account setup, or multi-actor behavior is present, keep role-specific and persisted-state coverage explicit.",
+      "- When accessibility, responsive/mobile, concurrency, performance, or browser support is part of the requirement, keep those obligations explicit instead of implied.",
+      "- When API or DB verification is part of the requirement, keep request/response, persistence, retry/failure, and rollback behavior explicit when relevant."
     );
   }
   if (generationMode === "rob_style") {
@@ -2164,20 +2299,33 @@ function buildInstructionText(input, images, inputType, insights, generationMode
     );
   }
   if (formLike) {
-    lines.push(
-      "- This is a form-style / CRUD-style requirement, so expand the suite the way a strong senior QA would.",
-      "- Include separate practical cases for field validation, boundary length, duplicate handling, default values, save-button behavior, cancel/navigation behavior, and downstream data visibility where relevant.",
-      "- If text or identifier fields are present, include realistic checks for max length, over-limit input, special characters, and leading/trailing spaces when those are meaningful to the requirement.",
-      "- Keep boundary and UI/navigation cases separate if they represent different real user risks.",
-      "- Target a fuller suite, typically around 28 to 35 cases for a medium-complexity form requirement unless the requirement is genuinely tiny."
-    );
-    lines.push(...buildClassicCoverageChecklist(input, insights).map((line) => `- ${line}`));
+    if (strictRequirementMode) {
+      lines.push(
+        "- This has form-style or CRUD-style signals, but strict mode is active: cover only the fields, buttons, defaults, validations, states, and downstream visibility stated or directly required by the requirement.",
+        "- Do not add generic max-length, special-character, whitespace, tab-order, breadcrumb, duplicate, or repeated-save cases unless the requirement explicitly states those rules or they are direct consequences of named behavior."
+      );
+    } else {
+      lines.push(
+        "- This is a form-style / CRUD-style requirement, so expand the suite the way a strong senior QA would.",
+        "- Include separate practical cases for field validation, boundary length, duplicate handling, default values, save-button behavior, cancel/navigation behavior, and downstream data visibility where relevant.",
+        "- If text or identifier fields are present, include realistic checks for max length, over-limit input, special characters, and leading/trailing spaces when those are meaningful to the requirement.",
+        "- Keep boundary and UI/navigation cases separate if they represent different real user risks.",
+        "- Target a fuller suite, typically around 28 to 35 cases for a medium-complexity form requirement unless the requirement is genuinely tiny."
+      );
+      lines.push(...buildClassicCoverageChecklist(input, insights).map((line) => `- ${line}`));
+    }
   }
   if (listLike) {
-    lines.push(
-      "- This requirement also has list/grid/table/page behavior, so include those scenarios explicitly instead of assuming they are covered by general functional cases."
-    );
-    lines.push(...listCoverageChecklist.map((line) => `- ${line}`));
+    if (strictRequirementMode) {
+      lines.push(
+        "- This has list, grid, tree, or page-behavior signals, but strict mode is active: cover only the visible list/tree/page behaviors, actions, empty states, filters, searches, sorts, and navigation paths stated or directly required by the requirement."
+      );
+    } else {
+      lines.push(
+        "- This requirement also has list/grid/table/page behavior, so include those scenarios explicitly instead of assuming they are covered by general functional cases."
+      );
+      lines.push(...listCoverageChecklist.map((line) => `- ${line}`));
+    }
   }
   if (authorityCoverageChecklist.length > 0) {
     lines.push(...authorityCoverageChecklist.map((line) => `- ${line}`));
@@ -2240,6 +2388,7 @@ function buildInstructionText(input, images, inputType, insights, generationMode
 }
 async function maybeAnalyzeRequirement(aiSettings, inputType, input) {
   if (!input.trim()) return null;
+  if (isClaudeCliProviderSettings(aiSettings)) return null;
   if (inputType !== "requirement" && inputType !== "highlevel" && inputType !== "scenario") {
     return null;
   }
@@ -2268,7 +2417,7 @@ async function callAiProvider(aiSettings, systemPrompt, userContent) {
   } catch (error) {
     const errorText = error instanceof Error ? error.message : "Failed to generate test cases";
     const lower = errorText.toLowerCase();
-    const status = lower.includes("rate limit") ? 429 : lower.includes("credit") || lower.includes("payment") ? 402 : 500;
+    const status = lower.includes("rate limit") || lower.includes("session limit") || lower.includes("usage limit") ? 429 : lower.includes("credit") || lower.includes("payment") ? 402 : 500;
     return { ok: false, status, errorText };
   }
 }
@@ -2290,29 +2439,41 @@ async function runGenerateTestCasePipeline({
   }
   const generationMode = getGenerationMode(aiSettings);
   const generationProfile = getGenerationModeProfile(generationMode);
-  const strictRequirementMode = isStrictRequirementMode(aiSettings);
+  const requestedStrictRequirementMode = isStrictRequirementMode(aiSettings);
+  const strictRequirementMode = requestedStrictRequirementMode || generationMode === "rob_style";
+  const broadChecklistEnabled = !strictRequirementMode;
   sendEvent?.("reading", { message: "Reading requirement..." });
   const requirementInsights = await maybeAnalyzeRequirement(aiSettings, inputType, input || "");
   sendEvent?.("analyzing", {
     message: requirementInsights ? `Analyzing requirement deeply for actor, ACs, and risk areas in ${generationProfile.label} mode...` : `Analyzing input and planning testcase coverage in ${generationProfile.label} mode...`
   });
-  const systemPrompt = buildSystemPrompt(inputType, generationMode, strictRequirementMode);
-  const classicCoverageChecklist = buildClassicCoverageChecklist(input, requirementInsights);
-  const listCoverageChecklist = buildListCoverageChecklist(input, requirementInsights);
+  const systemPrompt = [
+    buildSystemPrompt(inputType, generationMode, strictRequirementMode),
+    ...isClaudeCliProviderSettings(aiSettings) ? [
+      "",
+      "MANDATORY INTERNAL PRINCIPAL-QA QUALITY GATE:",
+      "- Privately map the raw requirement into atomic requirement points before drafting the suite.",
+      "- Privately review the complete suite for traceability, exact-term fidelity, missing explicit behavior, unsupported assumptions, weak expected results, and semantic duplicates.",
+      "- Correct every meaningful gap before answering, without exposing the private analysis or reducing distinct coverage.",
+      "- Return only the final structured testcase payload."
+    ] : []
+  ].join("\n");
+  const classicCoverageChecklist = broadChecklistEnabled ? buildClassicCoverageChecklist(input, requirementInsights) : [];
+  const listCoverageChecklist = broadChecklistEnabled ? buildListCoverageChecklist(input, requirementInsights) : [];
   const authorityCoverageChecklist = buildAuthorityCoverageChecklist(input);
   const configCoverageChecklist = buildConfigCoverageChecklist(input, requirementInsights);
-  const authCoverageChecklist = buildAuthCoverageChecklist(input, requirementInsights);
+  const authCoverageChecklist = broadChecklistEnabled ? buildAuthCoverageChecklist(input, requirementInsights) : [];
   const sideEffectCoverageChecklist = buildSideEffectCoverageChecklist(input, requirementInsights);
-  const onboardingCoverageChecklist = buildOnboardingCoverageChecklist(input, requirementInsights);
+  const onboardingCoverageChecklist = broadChecklistEnabled ? buildOnboardingCoverageChecklist(input, requirementInsights) : [];
   const multiActorCoverageChecklist = buildMultiActorCoverageChecklist(input, requirementInsights);
   const requirementFidelityChecklist = buildRequirementFidelityChecklist(input, strictRequirementMode);
   const configDrivenFilterChecklist = buildConfigDrivenFilterChecklist(input, requirementInsights, strictRequirementMode);
-  const accessibilityCoverageChecklist = buildAccessibilityCoverageChecklist(input, requirementInsights);
-  const responsiveCoverageChecklist = buildResponsiveCoverageChecklist(input, requirementInsights);
-  const browserCoverageChecklist = buildBrowserCompatibilityChecklist(input, requirementInsights);
-  const concurrencyCoverageChecklist = buildConcurrencyCoverageChecklist(input, requirementInsights);
-  const performanceCoverageChecklist = buildPerformanceCoverageChecklist(input, requirementInsights);
-  const apiDbCoverageChecklist = buildApiDbCoverageChecklist(input, requirementInsights);
+  const accessibilityCoverageChecklist = broadChecklistEnabled ? buildAccessibilityCoverageChecklist(input, requirementInsights) : [];
+  const responsiveCoverageChecklist = broadChecklistEnabled ? buildResponsiveCoverageChecklist(input, requirementInsights) : [];
+  const browserCoverageChecklist = broadChecklistEnabled ? buildBrowserCompatibilityChecklist(input, requirementInsights) : [];
+  const concurrencyCoverageChecklist = broadChecklistEnabled ? buildConcurrencyCoverageChecklist(input, requirementInsights) : [];
+  const performanceCoverageChecklist = broadChecklistEnabled ? buildPerformanceCoverageChecklist(input, requirementInsights) : [];
+  const apiDbCoverageChecklist = broadChecklistEnabled ? buildApiDbCoverageChecklist(input, requirementInsights) : [];
   const userContent = [
     {
       type: "text",
@@ -2345,22 +2506,39 @@ async function runGenerateTestCasePipeline({
   if (!attemptOne.ok) {
     throw attemptOne;
   }
+  const attemptOneCases = removeUnsupportedStrictTestCases(
+    input || "",
+    attemptOne.testCases,
+    strictRequirementMode
+  );
   sendEvent?.("validating", { message: "Running QA rule checks..." });
   const firstValidation = validateGeneratedCases(
     inputType,
     input || "",
-    attemptOne.testCases,
+    attemptOneCases,
     requirementInsights,
     strictRequirementMode
   );
   if (firstValidation.valid) {
     if (resolvedCacheKey) {
-      setCachedRequest(resolvedCacheKey, attemptOne.testCases);
+      setCachedRequest(resolvedCacheKey, attemptOneCases);
     }
-    return { testCases: attemptOne.testCases };
+    return { testCases: attemptOneCases };
   }
   sendEvent?.("retrying", { message: "Improving coverage and rewriting weak cases..." });
-  const correctionInstruction = [
+  const correctionInstruction = strictRequirementMode ? [
+    "The previous testcase suite missed stated requirement coverage or failed requirement traceability. Regenerate the FULL suite from scratch.",
+    "",
+    "Problems found:",
+    ...firstValidation.violations.map((item, index) => `${index + 1}. ${item}`),
+    "",
+    "Re-read the requirement line by line and cover every stated condition explicitly.",
+    "Keep every testcase anchored to explicit requirement wording, AC points, stated permissions, stated UI actions/states, stated validation or blocked paths, or directly stated side effects.",
+    "Add missing positive, negative, UI, functional, permission, validation, or edge cases only when the requirement supports them.",
+    "Remove unsupported generic CRUD, browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin-configuration scenarios.",
+    "Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.",
+    "Return only the structured testcase payload."
+  ].join("\n") : [
     "The previous testcase suite is too weak or too compressed. Regenerate the FULL suite from scratch.",
     "",
     "Problems found:",
@@ -2369,22 +2547,28 @@ async function runGenerateTestCasePipeline({
     "Do not compress distinct meaningful checks into broad umbrella cases.",
     "Expand the suite with classic senior manual-QA coverage where relevant: boundaries, duplicate handling, whitespace, special characters, navigation, breadcrumbs/title, tab order, default values, downstream visibility, side effects, and repeated execution.",
     "Keep the suite broad and practical, closer to a classic strong QA export.",
+    "Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.",
     "Return only the structured testcase payload."
   ].join("\n");
   const retryContent = [...userContent, { type: "text", text: correctionInstruction }];
   const attemptTwo = await callAiProvider(aiSettings, systemPrompt, retryContent);
   if (!attemptTwo.ok) {
-    return { testCases: attemptOne.testCases };
+    return { testCases: attemptOneCases };
   }
+  const attemptTwoCases = removeUnsupportedStrictTestCases(
+    input || "",
+    attemptTwo.testCases,
+    strictRequirementMode
+  );
   sendEvent?.("validating", { message: "Re-checking revised testcase suite..." });
   const secondValidation = validateGeneratedCases(
     inputType,
     input || "",
-    attemptTwo.testCases,
+    attemptTwoCases,
     requirementInsights,
     strictRequirementMode
   );
-  const bestResult = secondValidation.valid || attemptTwo.testCases.length >= attemptOne.testCases.length ? attemptTwo.testCases : attemptOne.testCases;
+  const bestResult = secondValidation.valid ? attemptTwoCases : secondValidation.violations.length < firstValidation.violations.length ? attemptTwoCases : secondValidation.violations.length > firstValidation.violations.length ? attemptOneCases : attemptTwoCases.length >= attemptOneCases.length ? attemptTwoCases : attemptOneCases;
   if (resolvedCacheKey) {
     setCachedRequest(resolvedCacheKey, bestResult);
   }
@@ -2608,7 +2792,391 @@ var clarificationQuestionsSchema = {
   additionalProperties: false
 };
 
+// server/claudeCliAdapter.ts
+import { spawn } from "node:child_process";
+import { access, mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+var ALL_CLAUDE_TOOLS = "Bash,BashOutput,KillShell,Read,Write,Edit,NotebookEdit,Glob,Grep,WebFetch,WebSearch,Task,TodoWrite,SlashCommand";
+var MAX_IMAGES = 5;
+var MAX_IMAGE_BYTES = 1e6;
+var MAX_TOTAL_IMAGE_BYTES = 4e6;
+var MAX_STDOUT_BYTES = 2e7;
+var MAX_STDERR_BYTES = 64e3;
+var DEFAULT_TIMEOUT_MS = 25e4;
+var MIN_TIMEOUT_MS = 3e4;
+var MAX_TIMEOUT_MS = 84e4;
+var ALLOWED_IMAGE_TYPES = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif"
+};
+var SECRET_PREFIXES = [
+  "ANTHROPIC",
+  "OPENAI",
+  "GEMINI",
+  "GOOGLE",
+  "GROQ",
+  "OPENROUTER",
+  "AWS",
+  "SUPABASE",
+  "VERCEL",
+  "CLOUDFLARE",
+  "CF_",
+  "VITE_",
+  "SMTP",
+  "TELEGRAM",
+  "DHAN",
+  "UPSTOX",
+  "ANGEL"
+];
+var SECRET_MARKERS = [
+  "API_KEY",
+  "AUTH_TOKEN",
+  "ACCESS_TOKEN",
+  "SECRET",
+  "PASSWORD",
+  "PASSPHRASE",
+  "CREDENTIAL",
+  "PROXY_TOKEN"
+];
+var generateWithClaudeCli = async (options) => {
+  const requestDirectory = await mkdtemp(path.join(os.tmpdir(), "testcase-claude-"));
+  const systemPromptPath = path.join(requestDirectory, "system-prompt.txt");
+  try {
+    await writeFile(systemPromptPath, options.systemPrompt, "utf8");
+    const prompt = await materializeUserParts(options.userParts, requestDirectory);
+    const hasImages = prompt.imagePaths.length > 0;
+    const cliPath = await findClaudeCli();
+    const command = buildClaudeCommand({
+      cliPath,
+      model: options.model,
+      schema: options.output.schema,
+      systemPromptPath,
+      hasImages
+    });
+    const timeoutMs = readTimeoutMs(process.env.CLAUDE_CODE_TIMEOUT_MS);
+    const { stdout } = await runClaudeProcess({
+      executable: command.executable,
+      args: command.args,
+      cwd: requestDirectory,
+      input: buildClaudeCliUserPrompt(prompt.text, prompt.imagePaths, options.featureName),
+      env: safeClaudeChildEnv(),
+      timeoutMs
+    });
+    return parseClaudeCliEnvelope(stdout);
+  } finally {
+    await removeRequestDirectory(requestDirectory);
+  }
+};
+function safeClaudeChildEnv(source = process.env) {
+  const safeEnvironment = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (typeof value !== "string" || isSecretEnvironmentVariable(name)) {
+      continue;
+    }
+    safeEnvironment[name] = value;
+  }
+  return safeEnvironment;
+}
+function decodeImageDataUrl(dataUrl) {
+  const match = dataUrl.match(/^data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)$/);
+  if (!match) {
+    throw new Error("A screenshot is not a valid base64 image data URL.");
+  }
+  const mediaType = match[1].toLowerCase();
+  const extension = ALLOWED_IMAGE_TYPES[mediaType];
+  if (!extension) {
+    throw new Error("Screenshots must be PNG, JPEG, WebP, or GIF images.");
+  }
+  const buffer = Buffer.from(match[2].replace(/\s/g, ""), "base64");
+  if (buffer.length === 0) {
+    throw new Error("A screenshot was empty.");
+  }
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    throw new Error("Each screenshot must be 1 MB or smaller after optimization.");
+  }
+  return { buffer, extension, mediaType };
+}
+function buildClaudeCliUserPrompt(text, imagePaths, featureName) {
+  const sections = [
+    `Task: ${featureName}`,
+    "",
+    text.trim() || "No text content was supplied."
+  ];
+  if (imagePaths.length > 0) {
+    sections.push(
+      "",
+      "Attached screenshots:",
+      ...imagePaths.map((imagePath, index) => `${index + 1}. ${imagePath}`),
+      "",
+      "Use the Read tool only to inspect these exact screenshot paths. Do not access any other file."
+    );
+  }
+  return sections.join("\n");
+}
+function parseClaudeCliEnvelope(stdout) {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    throw new Error("Claude CLI returned no output.");
+  }
+  let envelope = tryParseObject(trimmed);
+  if (!envelope) {
+    for (const line of trimmed.split(/\r?\n/).reverse()) {
+      envelope = tryParseObject(line.trim());
+      if (envelope) {
+        break;
+      }
+    }
+  }
+  if (!envelope) {
+    throw new Error("Claude CLI returned an invalid response envelope.");
+  }
+  if (envelope.is_error) {
+    const message = typeof envelope.result === "string" ? envelope.result.slice(0, 500) : "Claude CLI reported an unsuccessful generation.";
+    throw new Error(message);
+  }
+  if (envelope.structured_output !== void 0 && envelope.structured_output !== null) {
+    return envelope.structured_output;
+  }
+  if (typeof envelope.result !== "string" || !envelope.result.trim()) {
+    throw new Error("Claude CLI did not return structured output.");
+  }
+  const result = envelope.result.replace(/```json/gi, "").replace(/```/g, "").trim();
+  try {
+    return JSON.parse(result);
+  } catch {
+    throw new Error("Claude CLI result did not contain valid structured JSON.");
+  }
+}
+async function findClaudeCli(environment = process.env) {
+  const configuredPath = environment.CLAUDE_CLI_PATH?.trim();
+  if (configuredPath) {
+    await assertFileExists(configuredPath, "CLAUDE_CLI_PATH");
+    return configuredPath;
+  }
+  if (process.platform !== "win32") {
+    return "claude";
+  }
+  const homeDirectory = environment.USERPROFILE || environment.HOME;
+  if (homeDirectory) {
+    const extensionsDirectory = path.join(homeDirectory, ".vscode", "extensions");
+    try {
+      const candidates = (await readdir(extensionsDirectory, { withFileTypes: true })).filter((entry) => entry.isDirectory() && entry.name.startsWith("anthropic.claude-code-")).map((entry) => ({
+        version: parseExtensionVersion(entry.name),
+        binary: path.join(extensionsDirectory, entry.name, "resources", "native-binary", "claude.exe")
+      })).sort((left, right) => compareVersions(right.version, left.version));
+      for (const candidate of candidates) {
+        try {
+          await access(candidate.binary);
+          return candidate.binary;
+        } catch {
+        }
+      }
+    } catch {
+    }
+  }
+  return "claude";
+}
+async function materializeUserParts(userParts, requestDirectory) {
+  const textParts = [];
+  const imageParts = userParts.filter(
+    (part) => part.type === "image"
+  );
+  if (imageParts.length > MAX_IMAGES) {
+    throw new Error(`A maximum of ${MAX_IMAGES} screenshots is supported.`);
+  }
+  const attachmentsDirectory = path.join(requestDirectory, "attachments");
+  const imagePaths = [];
+  let totalImageBytes = 0;
+  if (imageParts.length > 0) {
+    await mkdir(attachmentsDirectory, { recursive: true });
+  }
+  let imageIndex = 0;
+  for (const part of userParts) {
+    if (part.type === "text") {
+      textParts.push(part.text);
+      continue;
+    }
+    const decoded = decodeImageDataUrl(part.dataUrl);
+    totalImageBytes += decoded.buffer.length;
+    if (totalImageBytes > MAX_TOTAL_IMAGE_BYTES) {
+      throw new Error("Combined screenshot size must be 4 MB or smaller after optimization.");
+    }
+    imageIndex += 1;
+    const imagePath = path.join(attachmentsDirectory, `screenshot-${imageIndex}.${decoded.extension}`);
+    await writeFile(imagePath, decoded.buffer);
+    imagePaths.push(imagePath);
+  }
+  return { text: textParts.join("\n\n"), imagePaths };
+}
+function buildClaudeCommand({
+  cliPath,
+  model,
+  schema,
+  systemPromptPath,
+  hasImages
+}) {
+  const allowedTools = hasImages ? "Read" : "";
+  const deniedTools = hasImages ? ALL_CLAUDE_TOOLS.split(",").filter((toolName) => toolName !== "Read").join(",") : ALL_CLAUDE_TOOLS;
+  const args = [
+    "-p",
+    "--output-format",
+    "json",
+    "--json-schema",
+    JSON.stringify(schema),
+    "--system-prompt-file",
+    systemPromptPath,
+    "--tools",
+    allowedTools,
+    "--allowedTools",
+    allowedTools,
+    "--disallowedTools",
+    deniedTools,
+    "--strict-mcp-config",
+    "--no-session-persistence",
+    "--safe-mode",
+    "--disable-slash-commands",
+    "--permission-mode",
+    "dontAsk",
+    "--max-turns",
+    hasImages ? "8" : "6",
+    "--effort",
+    "high",
+    "--model",
+    model
+  ];
+  return { executable: cliPath, args };
+}
+function runClaudeProcess({
+  executable,
+  args,
+  cwd,
+  input,
+  env,
+  timeoutMs
+}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, {
+      cwd,
+      env,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(new Error(`Claude CLI timed out after ${Math.round(timeoutMs / 1e3)} seconds.`));
+    }, timeoutMs);
+    const finish = (error, result) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      if (error) {
+        reject(error);
+      } else if (result) {
+        resolve(result);
+      }
+    };
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      if (Buffer.byteLength(stdout, "utf8") > MAX_STDOUT_BYTES) {
+        child.kill();
+        finish(new Error("Claude CLI output exceeded the 20 MB safety limit."));
+      }
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr = `${stderr}${chunk}`.slice(-MAX_STDERR_BYTES);
+    });
+    child.on("error", (error) => {
+      finish(
+        new Error(
+          error.message.includes("ENOENT") ? "Claude CLI was not found. Install Claude Code or configure CLAUDE_CLI_PATH." : `Claude CLI could not start: ${error.message}`
+        )
+      );
+    });
+    child.on("close", (exitCode) => {
+      if (settled) {
+        return;
+      }
+      if (exitCode !== 0 && !stdout.trim()) {
+        const detail = sanitizeProcessError(stderr);
+        finish(new Error(`Claude CLI exited with code ${exitCode}.${detail ? ` ${detail}` : ""}`));
+        return;
+      }
+      finish(void 0, { stdout, stderr });
+    });
+    child.stdin.on("error", (error) => finish(new Error(`Claude CLI input failed: ${error.message}`)));
+    child.stdin.end(input, "utf8");
+  });
+}
+function isSecretEnvironmentVariable(name) {
+  const upperName = name.toUpperCase();
+  if (upperName.startsWith("CLAUDE")) {
+    return false;
+  }
+  return SECRET_PREFIXES.some((prefix) => upperName.startsWith(prefix)) || SECRET_MARKERS.some((marker) => upperName.includes(marker));
+}
+function readTimeoutMs(rawValue) {
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_TIMEOUT_MS;
+  }
+  return Math.min(MAX_TIMEOUT_MS, Math.max(MIN_TIMEOUT_MS, Math.round(parsed)));
+}
+function tryParseObject(text) {
+  if (!text.startsWith("{")) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function parseExtensionVersion(name) {
+  const match = name.match(/claude-code-(\d+)\.(\d+)\.(\d+)/);
+  return match ? match.slice(1).map(Number) : [0, 0, 0];
+}
+function compareVersions(left, right) {
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+}
+async function assertFileExists(filePath, label) {
+  try {
+    await access(filePath);
+  } catch {
+    throw new Error(`${label} points to a missing Claude CLI binary.`);
+  }
+}
+async function removeRequestDirectory(requestDirectory) {
+  const resolvedDirectory = path.resolve(requestDirectory);
+  const resolvedTemporaryRoot = path.resolve(os.tmpdir());
+  const expectedPrefix = `${resolvedTemporaryRoot}${path.sep}testcase-claude-`;
+  if (!resolvedDirectory.startsWith(expectedPrefix)) {
+    throw new Error("Refusing to remove an unexpected temporary directory.");
+  }
+  await rm(resolvedDirectory, { recursive: true, force: true });
+}
+function sanitizeProcessError(stderr) {
+  return stderr.replace(/(?:sk|AIza|gsk_|oauth)[A-Za-z0-9_.-]{8,}/gi, "[redacted]").replace(/\s+/g, " ").trim().slice(-500);
+}
+
 // server/generate-test-cases-server.ts
+configureClaudeCliStructuredGenerator(generateWithClaudeCli);
 var HOST = process.env.LOCAL_AI_SERVER_HOST || "127.0.0.1";
 var PORT = Number(process.env.LOCAL_AI_SERVER_PORT || 8787);
 var MAX_BODY_BYTES = 20 * 1024 * 1024;
@@ -2817,6 +3385,12 @@ async function handleHostedFunctionRequest(functionName, body) {
 async function computeCacheKey(input, inputType, imageCount, aiSettings) {
   return await computeGenerateCacheKey(input, inputType, imageCount, aiSettings);
 }
+async function analyzeRequirementForArtifact(aiSettings, requirement, featureName) {
+  if (!requirement || isClaudeCliProviderSettings(aiSettings)) {
+    return null;
+  }
+  return await analyzeRequirementText(aiSettings, requirement, featureName);
+}
 async function runGenerationPipeline(aiSettings, input, inputType, images, cacheKey, sendEvent) {
   return await runGenerateTestCasePipeline({
     aiSettings,
@@ -2878,7 +3452,11 @@ async function handleAuditTestCases(body) {
       return cached;
     }
   }
-  const requirementInsights = requirement ? await analyzeRequirementText(aiSettings, requirement, "audit-test-cases-analysis") : null;
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    "audit-test-cases-analysis"
+  );
   const systemPrompt = `You are a senior QA lead auditing an existing testcase suite.
 
 Your job:
@@ -3160,7 +3738,11 @@ async function handleTestPlan(body) {
   if (cached) {
     return cached;
   }
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, "test-plan-analysis");
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    "test-plan-analysis"
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: "test plan",
@@ -3237,7 +3819,11 @@ async function handleTraceabilityMatrix(body) {
   if (cached) {
     return cached;
   }
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, "traceability-matrix-analysis");
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    "traceability-matrix-analysis"
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: "requirement traceability matrix",
@@ -3303,7 +3889,11 @@ async function handleTestDataPlan(body) {
   if (cached) {
     return cached;
   }
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, "test-data-plan-analysis");
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    "test-data-plan-analysis"
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: "test data plan",
@@ -3365,7 +3955,11 @@ async function handleScenarioMap(body) {
   if (cached) {
     return cached;
   }
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, "scenario-map-analysis");
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    "scenario-map-analysis"
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: "scenario map",
@@ -3426,7 +4020,11 @@ async function handleClarificationQuestions(body) {
   if (cached) {
     return cached;
   }
-  const requirementInsights = await analyzeRequirementText(aiSettings, requirement, "clarification-questions-analysis");
+  const requirementInsights = await analyzeRequirementForArtifact(
+    aiSettings,
+    requirement,
+    "clarification-questions-analysis"
+  );
   const parsed = await generateReviewedStructuredData({
     aiSettings,
     artifactLabel: "clarification question set",
@@ -3480,6 +4078,10 @@ function toProviderFailure(error) {
   if (typeof error === "object" && error && "ok" in error && error.ok === false) {
     const providerError = error;
     if (providerError.status === 429) {
+      const lower = providerError.errorText.toLowerCase();
+      if (lower.includes("session limit") || lower.includes("usage limit")) {
+        return { ok: false, status: 429, errorText: providerError.errorText };
+      }
       return { ok: false, status: 429, errorText: "Rate limit exceeded. Please try again in a moment." };
     }
     if (providerError.status === 402) {

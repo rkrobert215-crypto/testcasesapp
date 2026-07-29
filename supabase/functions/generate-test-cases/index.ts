@@ -604,7 +604,7 @@ const callAiProvider = async (
     const errorText = error instanceof Error ? error.message : 'Failed to generate test cases';
     const lower = errorText.toLowerCase();
     const status =
-      lower.includes('rate limit') ? 429 :
+      lower.includes('rate limit') || lower.includes('session limit') || lower.includes('usage limit') ? 429 :
       lower.includes('credit') || lower.includes('payment') ? 402 :
       500;
 
@@ -844,8 +844,12 @@ serve(async (req) => {
     if (typeof error === 'object' && error && 'ok' in error && (error as ProviderFailure).ok === false) {
       const providerError = error as ProviderFailure;
       if (providerError.status === 429) {
+        const errorText = providerError.errorText.toLowerCase().includes('session limit') ||
+          providerError.errorText.toLowerCase().includes('usage limit')
+          ? providerError.errorText
+          : 'Rate limit exceeded. Please try again in a moment.';
         return new Response(
-          JSON.stringify({ error: 'Rate limit exceeded. Please try again in a moment.' }),
+          JSON.stringify({ error: errorText }),
           { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }

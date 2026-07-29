@@ -1,6 +1,7 @@
-type AiProvider = 'openai' | 'claude' | 'gemini' | 'groq' | 'openrouter';
+type AiProvider = 'claude_cli' | 'openai' | 'claude' | 'gemini' | 'groq' | 'openrouter';
 type OpenAiModel = 'gpt-5.4' | 'gpt-5.4-mini';
 type ClaudeModel = 'claude-sonnet-4-20250514' | 'claude-opus-4-1-20250805';
+type ClaudeCliModel = 'sonnet' | 'opus' | 'haiku';
 type GeminiModel = 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-3-flash-preview';
 type OpenRouterModel = string;
 
@@ -15,17 +16,18 @@ interface AiSettings {
   openrouterApiKey: string;
   openaiModel: OpenAiModel;
   claudeModel: ClaudeModel;
+  claudeCliModel: ClaudeCliModel;
   geminiModel: GeminiModel;
   openrouterModel: OpenRouterModel;
 }
 
-interface StructuredOutputDefinition {
+export interface StructuredOutputDefinition {
   name: string;
   description: string;
   schema: JsonSchema;
 }
 
-type AiPromptPart =
+export type AiPromptPart =
   | {
       type: 'text';
       text: string;
@@ -43,8 +45,18 @@ interface StructuredGenerationOptions {
   featureName: string;
 }
 
+export interface ClaudeCliGenerationOptions {
+  model: ClaudeCliModel;
+  systemPrompt: string;
+  userParts: AiPromptPart[];
+  output: StructuredOutputDefinition;
+  featureName: string;
+}
+
+export type ClaudeCliStructuredGenerator = <T>(options: ClaudeCliGenerationOptions) => Promise<T>;
+
 const DEFAULT_SETTINGS: AiSettings = {
-  provider: 'gemini',
+  provider: 'claude_cli',
   openaiApiKey: '',
   claudeApiKey: '',
   geminiApiKey: '',
@@ -52,18 +64,34 @@ const DEFAULT_SETTINGS: AiSettings = {
   openrouterApiKey: '',
   openaiModel: 'gpt-5.4',
   claudeModel: 'claude-sonnet-4-20250514',
+  claudeCliModel: 'sonnet',
   geminiModel: 'gemini-2.5-pro',
   openrouterModel: 'openrouter/auto',
 };
 
 const GROQ_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
 const PROVIDER_SECRET_ENV_NAMES: Record<AiProvider, string[]> = {
+  claude_cli: [],
   openai: ['OPENAI_API_KEY'],
   claude: ['ANTHROPIC_API_KEY', 'CLAUDE_API_KEY'],
   gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
   groq: ['GROQ_API_KEY'],
   openrouter: ['OPENROUTER_API_KEY'],
 };
+
+let claudeCliStructuredGenerator: ClaudeCliStructuredGenerator | null = null;
+
+export function configureClaudeCliStructuredGenerator(generator: ClaudeCliStructuredGenerator | null) {
+  claudeCliStructuredGenerator = generator;
+}
+
+export function isClaudeCliProviderSettings(value: unknown): boolean {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  return (value as { provider?: unknown }).provider === 'claude_cli';
+}
 
 class StructuredOutputParseError extends Error {
   rawText?: string;
@@ -91,6 +119,7 @@ export async function generateStructuredData<T>({
       systemPrompt,
       userParts,
       output,
+      featureName,
     });
   } catch (error) {
     if (isStructuredOutputParseError(error)) {
@@ -101,6 +130,7 @@ export async function generateStructuredData<T>({
           systemPrompt: buildRepairSystemPrompt(systemPrompt, output),
           userParts: buildRepairUserParts(userParts, error),
           output,
+          featureName,
         });
       } catch (retryError) {
         const providerError = toError(retryError);
@@ -128,6 +158,7 @@ function normalizeAiSettings(value: unknown): AiSettings {
     openrouterApiKey: typeof raw.openrouterApiKey === 'string' ? raw.openrouterApiKey : DEFAULT_SETTINGS.openrouterApiKey,
     openaiModel: isOpenAiModel(normalizedOpenAiModel) ? normalizedOpenAiModel : DEFAULT_SETTINGS.openaiModel,
     claudeModel: isClaudeModel(raw.claudeModel) ? raw.claudeModel : DEFAULT_SETTINGS.claudeModel,
+    claudeCliModel: isClaudeCliModel(raw.claudeCliModel) ? raw.claudeCliModel : DEFAULT_SETTINGS.claudeCliModel,
     geminiModel: isGeminiModel(raw.geminiModel) ? raw.geminiModel : DEFAULT_SETTINGS.geminiModel,
     openrouterModel: normalizeOpenRouterModel(raw.openrouterModel),
   };
@@ -139,14 +170,30 @@ async function callProvider<T>({
   systemPrompt,
   userParts,
   output,
+  featureName,
 }: {
   provider: AiProvider;
   settings: AiSettings;
   systemPrompt: string;
   userParts: AiPromptPart[];
   output: StructuredOutputDefinition;
+  featureName: string;
 }): Promise<T> {
   switch (provider) {
+    case 'claude_cli':
+      if (!claudeCliStructuredGenerator) {
+        throw new Error(
+          'Claude Subscription is available only through the Node server with Claude CLI configured. Select another provider for Supabase Edge Functions.'
+        );
+      }
+
+      return await claudeCliStructuredGenerator<T>({
+        model: settings.claudeCliModel,
+        systemPrompt,
+        userParts,
+        output,
+        featureName,
+      });
     case 'openai':
       return await callOpenAiCompatibleTool<T>({
         url: 'https://api.openai.com/v1/chat/completions',
@@ -653,7 +700,14 @@ function shouldRetryOpenRouterWithAuto(model: string, error: unknown) {
 }
 
 function isProvider(value: unknown): value is AiProvider {
-  return value === 'openai' || value === 'claude' || value === 'gemini' || value === 'groq' || value === 'openrouter';
+  return (
+    value === 'claude_cli' ||
+    value === 'openai' ||
+    value === 'claude' ||
+    value === 'gemini' ||
+    value === 'groq' ||
+    value === 'openrouter'
+  );
 }
 
 function isOpenAiModel(value: unknown): value is OpenAiModel {
@@ -662,6 +716,10 @@ function isOpenAiModel(value: unknown): value is OpenAiModel {
 
 function isClaudeModel(value: unknown): value is ClaudeModel {
   return value === 'claude-sonnet-4-20250514' || value === 'claude-opus-4-1-20250805';
+}
+
+function isClaudeCliModel(value: unknown): value is ClaudeCliModel {
+  return value === 'sonnet' || value === 'opus' || value === 'haiku';
 }
 
 function isGeminiModel(value: unknown): value is GeminiModel {

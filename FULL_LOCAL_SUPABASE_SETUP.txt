@@ -203,7 +203,7 @@ Manual option:
    npx.cmd supabase login
 
 2. Link this repo to your hosted project:
-   npx.cmd supabase link --project-ref cbaorohwkyjswuvjgxlf
+   npx.cmd supabase link --project-ref YOUR_PROJECT_REF
 
 3. Deploy each public function with JWT disabled:
    npx.cmd supabase functions deploy generate-test-cases --no-verify-jwt
@@ -211,6 +211,11 @@ Manual option:
    npx.cmd supabase functions deploy smart-merge-testcases --no-verify-jwt
    npx.cmd supabase functions deploy validate-coverage --no-verify-jwt
    npx.cmd supabase functions deploy requirement-analysis --no-verify-jwt
+   npx.cmd supabase functions deploy test-plan --no-verify-jwt
+   npx.cmd supabase functions deploy traceability-matrix --no-verify-jwt
+   npx.cmd supabase functions deploy test-data-plan --no-verify-jwt
+   npx.cmd supabase functions deploy scenario-map --no-verify-jwt
+   npx.cmd supabase functions deploy clarification-questions --no-verify-jwt
 
 After that, your hosted backend will use:
 - the new multi-provider routing

@@ -1,4 +1,7 @@
-import { generateStructuredData } from './aiClient.ts';
+import {
+  generateStructuredData,
+  isClaudeCliProviderSettings,
+} from './aiClient.ts';
 import {
   analyzeRequirementText,
   type RequirementAnalysisResult,
@@ -45,7 +48,7 @@ interface GeneratePipelineResult {
   cached?: boolean;
 }
 
-const GENERATE_CACHE_VERSION = 'generate-test-cases-2026-04-08-v8';
+const GENERATE_CACHE_VERSION = 'generate-test-cases-2026-05-24-v9';
 
 const INPUT_TYPE_PROMPTS: Record<InputType, string> = {
   requirement: `You are a senior QA engineer with 15+ years of manual testing experience.
@@ -134,22 +137,28 @@ function buildSystemPrompt(
     '',
     `GENERATION STYLE MODE: ${profile.label}`,
     ...profile.generatorPromptLines.map((line) => `- ${line}`),
-    '- Think like a strong senior manual QA who separates meaningful validation, boundary, navigation, persistence, permission, and downstream-impact checks instead of collapsing them into a tiny suite.',
-    '- Prefer fuller practical coverage for form-based and CRUD flows when the requirement supports it.',
-    '- When list, table, grid, search, filter, sort, page, or details-view behavior is present, cover those user-visible behaviors explicitly instead of assuming they are implied.',
-    '- When permissions or authorities are present, keep permission-pair coverage explicit and exact instead of hiding it inside broad generic rows.',
-    '- When tenant settings, feature flags, enabled/disabled states, or policy toggles drive behavior, cover those state combinations explicitly.',
-    '- When login, MFA, OTP, authentication, redirect, or enrollment behavior is present, cover redirect targets, visible messages, and role-specific flows explicitly.',
-    '- When onboarding, account setup, customer/supplier/buyer/reseller actors, notifications, emails, exports, or API/network-driven side effects are present, keep those scenario clusters explicit instead of implied.',
-    '- When a requirement is medium or large, favor a broad realistic suite over a compressed minimalist suite.',
   ];
 
   if (strictRequirementMode) {
     lines.push(
-      '- STRICT EXACT REQUIREMENT MODE is enabled.',
-      '- Stay tightly anchored to the stated requirement, acceptance criteria, labels, config keys, rule names, and fixed logic terms.',
-      '- Do not invent derived UI/setup/configuration flows unless they are an immediate tester-level extension of a stated behavior.',
-      '- When the requirement contains exact labels, config keys, or logic names, preserve them throughout the suite instead of replacing them with generic examples.'
+      '- STRICT REQUIREMENT-TRACEABLE MODE is enabled.',
+      '- Treat the requirement text as the boundary of the testcase suite.',
+      '- Every testcase must map to explicit requirement wording, an acceptance-criteria point, a stated permission or role, a stated UI action/state, a stated validation or blocked path, or a directly stated user-visible side effect.',
+      '- Cover positive, negative, functional, UI, permission, and edge cases only where those categories are supported by the requirement.',
+      '- Do not add browser, responsive, performance, concurrency, accessibility, security, API/DB, or configuration-admin scenarios unless the requirement explicitly names that obligation.',
+      '- If the requirement limits an action to eligible departments, locations, groups, devices, statuses, roles, or permissions, test those constraints exactly and do not generalize them.',
+      '- Preserve exact labels, authority names, config keys, rule names, popup names, and fixed logic terms throughout the suite.'
+    );
+  } else {
+    lines.push(
+      '- Think like a strong senior manual QA who separates meaningful validation, boundary, navigation, persistence, permission, and downstream-impact checks instead of collapsing them into a tiny suite.',
+      '- Prefer fuller practical coverage for form-based and CRUD flows when the requirement supports it.',
+      '- When list, table, grid, search, filter, sort, page, or details-view behavior is present, cover those user-visible behaviors explicitly instead of assuming they are implied.',
+      '- When permissions or authorities are present, keep permission-pair coverage explicit and exact instead of hiding it inside broad generic rows.',
+      '- When tenant settings, feature flags, enabled/disabled states, or policy toggles drive behavior, cover those state combinations explicitly.',
+      '- When login, MFA, OTP, authentication, redirect, or enrollment behavior is present, cover redirect targets, visible messages, and role-specific flows explicitly.',
+      '- When onboarding, account setup, customer/supplier/buyer/reseller actors, notifications, emails, exports, or API/network-driven side effects are present, keep those scenario clusters explicit instead of implied.',
+      '- When a requirement is medium or large, favor a broad realistic suite over a compressed minimalist suite.'
     );
   }
 
@@ -699,7 +708,8 @@ function detectPrimaryAction(input: string): string | null {
 function estimateMinimumTestCases(
   inputType: InputType,
   input: string,
-  insights: RequirementAnalysisResult | null
+  insights: RequirementAnalysisResult | null,
+  strictRequirementMode = false
 ) {
   if (inputType === 'highlevel') {
     return Math.max(10, Math.min(20, (insights?.acceptanceCriteria.length ?? 0) * 2 || 10));
@@ -708,13 +718,29 @@ function estimateMinimumTestCases(
     return 1;
   }
 
-  const bulletRegex = /^\s*[-*•]\s|^\s*\d+[.)]\s/;
-  const normalizedInput = input.replaceAll('•', '-');
+  const bulletRegex = /^\s*[-*\u2022]\s|^\s*\d+[.)]\s/;
+  const normalizedInput = input.replaceAll('\u2022', '-');
   const bulletLines = normalizedInput.split('\n').filter((line) => bulletRegex.test(line)).length;
   const paragraphCount = input.split(/\n\s*\n/).filter((paragraph) => paragraph.trim().length > 0).length;
   const acCount = insights?.acceptanceCriteria.length ?? 0;
+  const authorityCount = extractAuthorities(input).length;
+
+  if (strictRequirementMode) {
+    const explicitPointCount = Math.max(acCount, bulletLines, paragraphCount);
+    let baseline = explicitPointCount > 0 ? Math.max(6, Math.min(48, explicitPointCount * 2)) : 8;
+
+    if (input.length > 1200) baseline = Math.max(baseline, 12);
+    if (input.length > 2200) baseline = Math.max(baseline, 18);
+    if (authorityCount > 0) baseline = Math.max(baseline, Math.min(36, 6 + authorityCount * 3));
+    if (isConfigDrivenFilterRequirement(input, insights)) {
+      baseline = Math.max(baseline, Math.min(40, 10 + explicitPointCount * 2));
+    }
+
+    return baseline;
+  }
+
   const formLike = isFormLikeRequirement(input, insights);
-  const hasAuthorities = extractAuthorities(input).length > 0;
+  const hasAuthorities = authorityCount > 0;
   const listLike = isListLikeRequirement(input, insights);
   const onboardingLike = isOnboardingLikeRequirement(input, insights);
   const sideEffectLike = isSideEffectRequirement(input, insights);
@@ -748,7 +774,7 @@ function estimateMinimumTestCases(
   return baseline;
 }
 
-function validateGeneratedCases(
+export function validateGeneratedCases(
   inputType: InputType,
   input: string,
   testCases: GeneratedTestCase[],
@@ -762,7 +788,7 @@ function validateGeneratedCases(
     return { valid: false, violations };
   }
 
-  const minimum = estimateMinimumTestCases(inputType, input, insights);
+  const minimum = estimateMinimumTestCases(inputType, input, insights, strictRequirementMode);
   if (testCases.length < minimum) {
     violations.push(`Generated only ${testCases.length} test cases, expected at least ${minimum} for this requirement size.`);
   }
@@ -853,6 +879,19 @@ function validateGeneratedCases(
     }
   }
 
+  if (strictRequirementMode) {
+    const lowerInput = input.toLowerCase();
+    const lowerCombined = combinedText.toLowerCase();
+    const inventedStrictTopics = STRICT_UNSUPPORTED_TOPICS
+      .filter((topic) => topic.generated.some((term) => containsStrictTopicTerm(lowerCombined, term)))
+      .filter((topic) => !topic.required.some((term) => containsStrictTopicTerm(lowerInput, term)))
+      .map((topic) => topic.label);
+
+    if (inventedStrictTopics.length > 0) {
+      violations.push(`Strict mode suite added unsupported scenario categories: ${inventedStrictTopics.join(', ')}.`);
+    }
+  }
+
   if (isConfigDrivenFilterRequirement(input, insights)) {
     const lowerCombined = combinedText.toLowerCase();
     const inventedUiSignals = [
@@ -883,6 +922,53 @@ function validateGeneratedCases(
   }
 
   return { valid: violations.length === 0, violations };
+}
+
+const STRICT_UNSUPPORTED_TOPICS = [
+  { label: 'cross-browser compatibility', generated: ['cross-browser', 'browser compatibility'], required: ['cross-browser', 'browser compatibility'] },
+  { label: 'responsive/mobile coverage', generated: ['responsive', 'mobile layout', 'tablet', 'touch behavior'], required: ['responsive', 'mobile', 'tablet', 'touch'] },
+  { label: 'performance/load coverage', generated: ['performance', 'load time', 'large-data', 'large data', 'slow response'], required: ['performance', 'load time', 'large data', 'slow response'] },
+  { label: 'concurrency coverage', generated: ['concurrency', 'multi-user', 'stale data', 'duplicate submit'], required: ['concurrency', 'multi-user', 'stale data', 'duplicate submit'] },
+  { label: 'accessibility coverage', generated: ['accessibility', 'aria', 'screen reader', 'keyboard navigation', 'focus order'], required: ['accessibility', 'aria', 'screen reader', 'keyboard', 'focus'] },
+  { label: 'API/DB verification', generated: ['api response', 'api payload', 'database', 'db verification', 'rollback'], required: ['api response', 'api payload', 'database', 'db verification', 'rollback'] },
+  { label: 'generic CRUD boundary coverage', generated: ['breadcrumb', 'tab order', 'special character', 'max length', 'maximum length', 'over-limit', 'leading/trailing spaces'], required: ['breadcrumb', 'tab order', 'special character', 'max length', 'maximum length', 'over-limit', 'leading/trailing spaces'] },
+  {
+    label: 'unstated list capabilities',
+    generated: ['sort the ', 'sorting', 'pagination', 'list columns', 'existing search', 'search functionality'],
+    required: ['sort', 'sorting', 'pagination', 'column', 'search'],
+  },
+];
+
+function containsStrictTopicTerm(text: string, term: string) {
+  if (!/^[a-z0-9]+$/i.test(term)) {
+    return text.includes(term);
+  }
+
+  const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${escapedTerm}\\b`, 'i').test(text);
+}
+
+export function removeUnsupportedStrictTestCases(
+  input: string,
+  testCases: GeneratedTestCase[],
+  strictRequirementMode: boolean
+) {
+  if (!strictRequirementMode) {
+    return testCases;
+  }
+
+  const lowerInput = input.toLowerCase();
+  const unsupportedTopics = STRICT_UNSUPPORTED_TOPICS.filter(
+    (topic) => !topic.required.some((term) => containsStrictTopicTerm(lowerInput, term))
+  );
+  const filtered = testCases.filter((testCase) => {
+    const lowerTestCase = JSON.stringify(testCase).toLowerCase();
+    return !unsupportedTopics.some((topic) =>
+      topic.generated.some((term) => containsStrictTopicTerm(lowerTestCase, term))
+    );
+  });
+
+  return deduplicateGeneratedTestCases(filtered);
 }
 
 function buildInsightSummary(insights: RequirementAnalysisResult | null) {
@@ -922,23 +1008,24 @@ function buildInstructionText(
 ) {
   const profile = getGenerationModeProfile(generationMode);
   const preferredStarter = insights?.recommendedStarter || 'Verify that the user';
+  const broadChecklistEnabled = !strictRequirementMode;
   const formLike = isFormLikeRequirement(input, insights);
   const listLike = isListLikeRequirement(input, insights);
-  const listCoverageChecklist = buildListCoverageChecklist(input, insights);
+  const listCoverageChecklist = broadChecklistEnabled ? buildListCoverageChecklist(input, insights) : [];
   const authorityCoverageChecklist = buildAuthorityCoverageChecklist(input);
   const configCoverageChecklist = buildConfigCoverageChecklist(input, insights);
-  const authCoverageChecklist = buildAuthCoverageChecklist(input, insights);
+  const authCoverageChecklist = broadChecklistEnabled ? buildAuthCoverageChecklist(input, insights) : [];
   const sideEffectCoverageChecklist = buildSideEffectCoverageChecklist(input, insights);
-  const onboardingCoverageChecklist = buildOnboardingCoverageChecklist(input, insights);
+  const onboardingCoverageChecklist = broadChecklistEnabled ? buildOnboardingCoverageChecklist(input, insights) : [];
   const multiActorCoverageChecklist = buildMultiActorCoverageChecklist(input, insights);
   const requirementFidelityChecklist = buildRequirementFidelityChecklist(input, strictRequirementMode);
   const configDrivenFilterChecklist = buildConfigDrivenFilterChecklist(input, insights, strictRequirementMode);
-  const accessibilityCoverageChecklist = buildAccessibilityCoverageChecklist(input, insights);
-  const responsiveCoverageChecklist = buildResponsiveCoverageChecklist(input, insights);
-  const browserCoverageChecklist = buildBrowserCompatibilityChecklist(input, insights);
-  const concurrencyCoverageChecklist = buildConcurrencyCoverageChecklist(input, insights);
-  const performanceCoverageChecklist = buildPerformanceCoverageChecklist(input, insights);
-  const apiDbCoverageChecklist = buildApiDbCoverageChecklist(input, insights);
+  const accessibilityCoverageChecklist = broadChecklistEnabled ? buildAccessibilityCoverageChecklist(input, insights) : [];
+  const responsiveCoverageChecklist = broadChecklistEnabled ? buildResponsiveCoverageChecklist(input, insights) : [];
+  const browserCoverageChecklist = broadChecklistEnabled ? buildBrowserCompatibilityChecklist(input, insights) : [];
+  const concurrencyCoverageChecklist = broadChecklistEnabled ? buildConcurrencyCoverageChecklist(input, insights) : [];
+  const performanceCoverageChecklist = broadChecklistEnabled ? buildPerformanceCoverageChecklist(input, insights) : [];
+  const apiDbCoverageChecklist = broadChecklistEnabled ? buildApiDbCoverageChecklist(input, insights) : [];
   const lines = [
     'Generate enterprise-quality test cases in structured form.',
     'Return the complete testcase suite with these exact fields for every row: id, requirementReference, module, priority, coverageArea, scenario, testCase, testData, preconditions, testSteps, expectedResult, postCondition, type.',
@@ -949,32 +1036,40 @@ function buildInstructionText(
     '',
     'MANDATORY OUTPUT QUALITY RULES:',
     '- Read every line of the requirement and map each acceptance criteria point to one or more test cases.',
-    '- Include both Positive and Negative scenarios where appropriate.',
-    '- Do not invent roles, authorities, statuses, or features that are not in the requirement.',
+    '- Every testcase must be traceable to explicit requirement text, an AC point, a stated permission/role, a stated UI action/state, a stated validation/negative path, or a directly stated user-visible outcome.',
+    '- Include both Positive and Negative scenarios where the requirement supports success and blocked, invalid, unauthorized, or error outcomes.',
+    '- Do not invent roles, authorities, statuses, labels, screens, settings, or features that are not in the requirement.',
     '- Make the suite read like a senior QA deliverable, not generic AI output.',
     '- Use clean module, page, modal, popup, list, or details-view names instead of vague generic labels whenever the requirement supports a clearer name.',
     '- Use practical business modules, priority, test data, and post-condition fields.',
     '- requirementReference must point to AC IDs or derived requirement IDs such as AC-01 or REQ-03.',
     '- For standard functional cases, prefer the recommended actor-based starter phrase from requirement analysis.',
-    '- Do not compress distinct meaningful checks into one case when a senior QA would keep them separate.',
-    '- Include practical derived coverage beyond explicit AC wording when it is a natural manual-testing extension of the requirement.',
-    '- If a requirement supports additional realistic field-validation or UI-behavior coverage, include it instead of stopping at the minimum explicit AC count.',
+    '- Do not compress distinct stated checks into one case when a senior QA would keep them separate.',
     '- Expected results should usually be short, direct, and observable. Prefer clean execution-ready outcomes over long padded paragraphs.',
-    '- When settings, permissions, roles, or statuses combine to change behavior, keep those combinations explicit if they create different real outcomes.',
+    '- When settings, permissions, roles, or statuses combine to change stated behavior, keep those combinations explicit if they create different real outcomes.',
     '- When exports, notifications, emails, downloads, API/network-driven updates, or downstream reflection are part of the requirement, make those side effects explicit.',
-    '- When onboarding, account setup, or multi-actor behavior is present, keep role-specific and persisted-state coverage explicit.',
-    '- When accessibility, responsive/mobile, concurrency, performance, or browser support is part of the requirement, keep those obligations explicit instead of implied.',
-    '- When API or DB verification is part of the requirement, keep request/response, persistence, retry/failure, and rollback behavior explicit when relevant.',
     '- When a requirement contains exact labels, config keys, rule terms, or fixed values, preserve those exact terms in the suite instead of replacing them with generic examples.',
     '- Do not invent a separate admin/configuration screen, modal, setup workflow, or settings editor unless the requirement explicitly describes one.',
+    '- Remove semantic duplicates and summary rows that merely repeat already-covered setup, action, and outcome; retain every distinct risk and requirement behavior.',
   ];
 
   if (strictRequirementMode) {
     lines.push(
-      '- STRICT EXACT REQUIREMENT MODE is enabled for this run.',
+      '- STRICT REQUIREMENT-TRACEABLE MODE is enabled for this run.',
       '- Stay tightly anchored to the stated requirement and acceptance-criteria wording.',
+      '- Add positive, negative, UI, functional, permission, and edge cases only when each case is grounded in the requirement text.',
+      '- Do not add generic CRUD, browser, responsive, accessibility, performance, concurrency, security, API/DB, or cross-platform coverage just because it is common QA practice.',
       '- Prefer exact behavior fidelity over broad inferred expansion when those two goals conflict.',
-      '- Do not rename exact labels, config keys, rule terms, or fixed filter values into generic business examples.'
+      '- If an action is allowed only for an eligible department, location, group, device, permission, or status, keep the testcase wording conditional and exact.',
+      '- Do not rename exact labels, config keys, rule terms, popup names, or fixed filter values into generic business examples.'
+    );
+  } else {
+    lines.push(
+      '- Include practical derived coverage beyond explicit AC wording when it is a natural manual-testing extension of the requirement.',
+      '- If a requirement supports additional realistic field-validation or UI-behavior coverage, include it instead of stopping at the minimum explicit AC count.',
+      '- When onboarding, account setup, or multi-actor behavior is present, keep role-specific and persisted-state coverage explicit.',
+      '- When accessibility, responsive/mobile, concurrency, performance, or browser support is part of the requirement, keep those obligations explicit instead of implied.',
+      '- When API or DB verification is part of the requirement, keep request/response, persistence, retry/failure, and rollback behavior explicit when relevant.'
     );
   }
 
@@ -984,14 +1079,14 @@ function buildInstructionText(
       '- Keep the writing human, practical, browser-focused, and close to a clean senior QA workbook style.',
       '- Make permission and authority wording exact whenever the requirement depends on it.',
       '- Keep expected results crisp, direct, and observable instead of padded.',
-      '- Keep notification, email, export, and reflected-data outcomes practical and clearly visible in the testcase wording when they matter.',
+      '- Keep notification, email, export, and reflected-data outcomes practical and clearly visible in the testcase wording when they matter.'
     );
   } else if (generationMode === 'yuv_style') {
     lines.push(
       '- Keep the suite broad and execution-oriented with clear module, page, UI, and navigation coverage.',
       '- Separate meaningful list, table, sort, filter, state, and downstream-visibility checks when they represent different user risks.',
       '- Expand onboarding, settings, notification, export, and actor-specific flows the way a strong functional QA would.',
-      '- Prefer stronger functional breadth over polished but narrow coverage.',
+      '- Prefer stronger functional breadth over polished but narrow coverage.'
     );
   } else if (generationMode === 'swag_style') {
     lines.push(
@@ -999,32 +1094,45 @@ function buildInstructionText(
       '- Explicitly include reusable web-app QA patterns such as forms, inputs, dropdowns, radios, uploads, drag-and-drop, grids, filters, sorts, exports, refresh behavior, and persistence when relevant.',
       '- Treat onboarding, account setup, notifications, emails, export/network reflection, and multi-actor roles as first-class benchmark patterns when relevant.',
       '- Treat accessibility, responsive/mobile behavior, concurrency, performance/loading, deeper API/DB verification, and browser compatibility as first-class benchmark patterns when relevant.',
-      '- Prefer benchmark-worthy completeness over narrow or over-compressed output.',
+      '- Prefer benchmark-worthy completeness over narrow or over-compressed output.'
     );
   } else {
     lines.push(
       '- Keep the suite formal, traceable, and ready for professional QA review boards or client sharing.',
       '- Make module names, priority, test data, and post-condition fields especially strong and useful.',
-      '- Favor concise, enterprise-standard wording over casual phrasing.',
+      '- Favor concise, enterprise-standard wording over casual phrasing.'
     );
   }
 
   if (formLike) {
-    lines.push(
-      '- This is a form-style / CRUD-style requirement, so expand the suite the way a strong senior QA would.',
-      '- Include separate practical cases for field validation, boundary length, duplicate handling, default values, save-button behavior, cancel/navigation behavior, and downstream data visibility where relevant.',
-      '- If text or identifier fields are present, include realistic checks for max length, over-limit input, special characters, and leading/trailing spaces when those are meaningful to the requirement.',
-      '- Keep boundary and UI/navigation cases separate if they represent different real user risks.',
-      '- Target a fuller suite, typically around 28 to 35 cases for a medium-complexity form requirement unless the requirement is genuinely tiny.',
-    );
-    lines.push(...buildClassicCoverageChecklist(input, insights).map((line) => `- ${line}`));
+    if (strictRequirementMode) {
+      lines.push(
+        '- This has form-style or CRUD-style signals, but strict mode is active: cover only the fields, buttons, defaults, validations, states, and downstream visibility stated or directly required by the requirement.',
+        '- Do not add generic max-length, special-character, whitespace, tab-order, breadcrumb, duplicate, or repeated-save cases unless the requirement explicitly states those rules or they are direct consequences of named behavior.'
+      );
+    } else {
+      lines.push(
+        '- This is a form-style / CRUD-style requirement, so expand the suite the way a strong senior QA would.',
+        '- Include separate practical cases for field validation, boundary length, duplicate handling, default values, save-button behavior, cancel/navigation behavior, and downstream data visibility where relevant.',
+        '- If text or identifier fields are present, include realistic checks for max length, over-limit input, special characters, and leading/trailing spaces when those are meaningful to the requirement.',
+        '- Keep boundary and UI/navigation cases separate if they represent different real user risks.',
+        '- Target a fuller suite, typically around 28 to 35 cases for a medium-complexity form requirement unless the requirement is genuinely tiny.'
+      );
+      lines.push(...buildClassicCoverageChecklist(input, insights).map((line) => `- ${line}`));
+    }
   }
 
   if (listLike) {
-    lines.push(
-      '- This requirement also has list/grid/table/page behavior, so include those scenarios explicitly instead of assuming they are covered by general functional cases.',
-    );
-    lines.push(...listCoverageChecklist.map((line) => `- ${line}`));
+    if (strictRequirementMode) {
+      lines.push(
+        '- This has list, grid, tree, or page-behavior signals, but strict mode is active: cover only the visible list/tree/page behaviors, actions, empty states, filters, searches, sorts, and navigation paths stated or directly required by the requirement.'
+      );
+    } else {
+      lines.push(
+        '- This requirement also has list/grid/table/page behavior, so include those scenarios explicitly instead of assuming they are covered by general functional cases.'
+      );
+      lines.push(...listCoverageChecklist.map((line) => `- ${line}`));
+    }
   }
 
   if (authorityCoverageChecklist.length > 0) {
@@ -1111,6 +1219,7 @@ async function maybeAnalyzeRequirement(
   input: string
 ): Promise<RequirementAnalysisResult | null> {
   if (!input.trim()) return null;
+  if (isClaudeCliProviderSettings(aiSettings)) return null;
   if (inputType !== 'requirement' && inputType !== 'highlevel' && inputType !== 'scenario') {
     return null;
   }
@@ -1147,7 +1256,7 @@ async function callAiProvider(
     const errorText = error instanceof Error ? error.message : 'Failed to generate test cases';
     const lower = errorText.toLowerCase();
     const status =
-      lower.includes('rate limit') ? 429 :
+      lower.includes('rate limit') || lower.includes('session limit') || lower.includes('usage limit') ? 429 :
       lower.includes('credit') || lower.includes('payment') ? 402 :
       500;
 
@@ -1178,7 +1287,9 @@ export async function runGenerateTestCasePipeline({
 
   const generationMode = getGenerationMode(aiSettings);
   const generationProfile = getGenerationModeProfile(generationMode);
-  const strictRequirementMode = isStrictRequirementMode(aiSettings);
+  const requestedStrictRequirementMode = isStrictRequirementMode(aiSettings);
+  const strictRequirementMode = requestedStrictRequirementMode || generationMode === 'rob_style';
+  const broadChecklistEnabled = !strictRequirementMode;
 
   sendEvent?.('reading', { message: 'Reading requirement...' });
   const requirementInsights = await maybeAnalyzeRequirement(aiSettings, inputType, input || '');
@@ -1189,23 +1300,35 @@ export async function runGenerateTestCasePipeline({
       : `Analyzing input and planning testcase coverage in ${generationProfile.label} mode...`,
   });
 
-  const systemPrompt = buildSystemPrompt(inputType, generationMode, strictRequirementMode);
-  const classicCoverageChecklist = buildClassicCoverageChecklist(input, requirementInsights);
-  const listCoverageChecklist = buildListCoverageChecklist(input, requirementInsights);
+  const systemPrompt = [
+    buildSystemPrompt(inputType, generationMode, strictRequirementMode),
+    ...(isClaudeCliProviderSettings(aiSettings)
+      ? [
+          '',
+          'MANDATORY INTERNAL PRINCIPAL-QA QUALITY GATE:',
+          '- Privately map the raw requirement into atomic requirement points before drafting the suite.',
+          '- Privately review the complete suite for traceability, exact-term fidelity, missing explicit behavior, unsupported assumptions, weak expected results, and semantic duplicates.',
+          '- Correct every meaningful gap before answering, without exposing the private analysis or reducing distinct coverage.',
+          '- Return only the final structured testcase payload.',
+        ]
+      : []),
+  ].join('\n');
+  const classicCoverageChecklist = broadChecklistEnabled ? buildClassicCoverageChecklist(input, requirementInsights) : [];
+  const listCoverageChecklist = broadChecklistEnabled ? buildListCoverageChecklist(input, requirementInsights) : [];
   const authorityCoverageChecklist = buildAuthorityCoverageChecklist(input);
   const configCoverageChecklist = buildConfigCoverageChecklist(input, requirementInsights);
-  const authCoverageChecklist = buildAuthCoverageChecklist(input, requirementInsights);
+  const authCoverageChecklist = broadChecklistEnabled ? buildAuthCoverageChecklist(input, requirementInsights) : [];
   const sideEffectCoverageChecklist = buildSideEffectCoverageChecklist(input, requirementInsights);
-  const onboardingCoverageChecklist = buildOnboardingCoverageChecklist(input, requirementInsights);
+  const onboardingCoverageChecklist = broadChecklistEnabled ? buildOnboardingCoverageChecklist(input, requirementInsights) : [];
   const multiActorCoverageChecklist = buildMultiActorCoverageChecklist(input, requirementInsights);
   const requirementFidelityChecklist = buildRequirementFidelityChecklist(input, strictRequirementMode);
   const configDrivenFilterChecklist = buildConfigDrivenFilterChecklist(input, requirementInsights, strictRequirementMode);
-  const accessibilityCoverageChecklist = buildAccessibilityCoverageChecklist(input, requirementInsights);
-  const responsiveCoverageChecklist = buildResponsiveCoverageChecklist(input, requirementInsights);
-  const browserCoverageChecklist = buildBrowserCompatibilityChecklist(input, requirementInsights);
-  const concurrencyCoverageChecklist = buildConcurrencyCoverageChecklist(input, requirementInsights);
-  const performanceCoverageChecklist = buildPerformanceCoverageChecklist(input, requirementInsights);
-  const apiDbCoverageChecklist = buildApiDbCoverageChecklist(input, requirementInsights);
+  const accessibilityCoverageChecklist = broadChecklistEnabled ? buildAccessibilityCoverageChecklist(input, requirementInsights) : [];
+  const responsiveCoverageChecklist = broadChecklistEnabled ? buildResponsiveCoverageChecklist(input, requirementInsights) : [];
+  const browserCoverageChecklist = broadChecklistEnabled ? buildBrowserCompatibilityChecklist(input, requirementInsights) : [];
+  const concurrencyCoverageChecklist = broadChecklistEnabled ? buildConcurrencyCoverageChecklist(input, requirementInsights) : [];
+  const performanceCoverageChecklist = broadChecklistEnabled ? buildPerformanceCoverageChecklist(input, requirementInsights) : [];
+  const apiDbCoverageChecklist = broadChecklistEnabled ? buildApiDbCoverageChecklist(input, requirementInsights) : [];
   const userContent: UserPromptPart[] = [
     {
       type: 'text',
@@ -1272,54 +1395,84 @@ export async function runGenerateTestCasePipeline({
   if (!attemptOne.ok) {
     throw attemptOne;
   }
+  const attemptOneCases = removeUnsupportedStrictTestCases(
+    input || '',
+    attemptOne.testCases,
+    strictRequirementMode
+  );
 
   sendEvent?.('validating', { message: 'Running QA rule checks...' });
   const firstValidation = validateGeneratedCases(
     inputType,
     input || '',
-    attemptOne.testCases,
+    attemptOneCases,
     requirementInsights,
     strictRequirementMode
   );
 
   if (firstValidation.valid) {
     if (resolvedCacheKey) {
-      setCachedRequest(resolvedCacheKey, attemptOne.testCases);
+      setCachedRequest(resolvedCacheKey, attemptOneCases);
     }
-    return { testCases: attemptOne.testCases };
+    return { testCases: attemptOneCases };
   }
 
   sendEvent?.('retrying', { message: 'Improving coverage and rewriting weak cases...' });
-  const correctionInstruction = [
-    'The previous testcase suite is too weak or too compressed. Regenerate the FULL suite from scratch.',
-    '',
-    'Problems found:',
-    ...firstValidation.violations.map((item, index) => `${index + 1}. ${item}`),
-    '',
-    'Do not compress distinct meaningful checks into broad umbrella cases.',
-    'Expand the suite with classic senior manual-QA coverage where relevant: boundaries, duplicate handling, whitespace, special characters, navigation, breadcrumbs/title, tab order, default values, downstream visibility, side effects, and repeated execution.',
-    'Keep the suite broad and practical, closer to a classic strong QA export.',
-    'Return only the structured testcase payload.',
-  ].join('\n');
+  const correctionInstruction = strictRequirementMode
+    ? [
+        'The previous testcase suite missed stated requirement coverage or failed requirement traceability. Regenerate the FULL suite from scratch.',
+        '',
+        'Problems found:',
+        ...firstValidation.violations.map((item, index) => `${index + 1}. ${item}`),
+        '',
+        'Re-read the requirement line by line and cover every stated condition explicitly.',
+        'Keep every testcase anchored to explicit requirement wording, AC points, stated permissions, stated UI actions/states, stated validation or blocked paths, or directly stated side effects.',
+        'Add missing positive, negative, UI, functional, permission, validation, or edge cases only when the requirement supports them.',
+        'Remove unsupported generic CRUD, browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin-configuration scenarios.',
+        'Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.',
+        'Return only the structured testcase payload.',
+      ].join('\n')
+    : [
+        'The previous testcase suite is too weak or too compressed. Regenerate the FULL suite from scratch.',
+        '',
+        'Problems found:',
+        ...firstValidation.violations.map((item, index) => `${index + 1}. ${item}`),
+        '',
+        'Do not compress distinct meaningful checks into broad umbrella cases.',
+        'Expand the suite with classic senior manual-QA coverage where relevant: boundaries, duplicate handling, whitespace, special characters, navigation, breadcrumbs/title, tab order, default values, downstream visibility, side effects, and repeated execution.',
+        'Keep the suite broad and practical, closer to a classic strong QA export.',
+        'Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.',
+        'Return only the structured testcase payload.',
+      ].join('\n');
   const retryContent: UserPromptPart[] = [...userContent, { type: 'text', text: correctionInstruction }];
   const attemptTwo = await callAiProvider(aiSettings, systemPrompt, retryContent);
 
   if (!attemptTwo.ok) {
-    return { testCases: attemptOne.testCases };
+    return { testCases: attemptOneCases };
   }
+  const attemptTwoCases = removeUnsupportedStrictTestCases(
+    input || '',
+    attemptTwo.testCases,
+    strictRequirementMode
+  );
 
   sendEvent?.('validating', { message: 'Re-checking revised testcase suite...' });
   const secondValidation = validateGeneratedCases(
     inputType,
     input || '',
-    attemptTwo.testCases,
+    attemptTwoCases,
     requirementInsights,
     strictRequirementMode
   );
-  const bestResult =
-    secondValidation.valid || attemptTwo.testCases.length >= attemptOne.testCases.length
-      ? attemptTwo.testCases
-      : attemptOne.testCases;
+  const bestResult = secondValidation.valid
+    ? attemptTwoCases
+    : secondValidation.violations.length < firstValidation.violations.length
+      ? attemptTwoCases
+      : secondValidation.violations.length > firstValidation.violations.length
+        ? attemptOneCases
+        : attemptTwoCases.length >= attemptOneCases.length
+          ? attemptTwoCases
+          : attemptOneCases;
 
   if (resolvedCacheKey) {
     setCachedRequest(resolvedCacheKey, bestResult);

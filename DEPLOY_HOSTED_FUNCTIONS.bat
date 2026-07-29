@@ -20,7 +20,14 @@ if errorlevel 1 (
 
 echo.
 echo Step 2: Link local repo to hosted project
-npx.cmd supabase link --project-ref cbaorohwkyjswuvjgxlf
+if not defined SUPABASE_PROJECT_REF set /p "SUPABASE_PROJECT_REF=Enter the Supabase project ref: "
+if not defined SUPABASE_PROJECT_REF (
+  echo.
+  echo Supabase project ref is required. Nothing was deployed.
+  pause
+  exit /b 1
+)
+npx.cmd supabase link --project-ref "%SUPABASE_PROJECT_REF%"
 if errorlevel 1 (
   echo.
   echo Supabase link did not finish.
@@ -30,20 +37,17 @@ if errorlevel 1 (
 
 echo.
 echo Step 3: Deploying edge functions
-npx.cmd supabase functions deploy generate-test-cases --no-verify-jwt
-if errorlevel 1 goto :deploy_error
-npx.cmd supabase functions deploy audit-test-cases --no-verify-jwt
-if errorlevel 1 goto :deploy_error
-npx.cmd supabase functions deploy smart-merge-testcases --no-verify-jwt
-if errorlevel 1 goto :deploy_error
-npx.cmd supabase functions deploy validate-coverage --no-verify-jwt
-if errorlevel 1 goto :deploy_error
-npx.cmd supabase functions deploy requirement-analysis --no-verify-jwt
-if errorlevel 1 goto :deploy_error
+rem Keep this list in sync with the local server routes and QA planning tabs.
+set "FUNCTIONS=generate-test-cases audit-test-cases smart-merge-testcases validate-coverage requirement-analysis test-plan traceability-matrix test-data-plan scenario-map clarification-questions"
+for %%F in (%FUNCTIONS%) do (
+  echo Deploying %%F...
+  npx.cmd supabase functions deploy %%F --no-verify-jwt
+  if errorlevel 1 goto :deploy_error
+)
 
 echo.
 echo ==================================================
-echo Hosted Supabase backend deployment finished.
+echo Hosted Supabase backend deployment finished for %SUPABASE_PROJECT_REF%.
 echo ==================================================
 echo.
 pause

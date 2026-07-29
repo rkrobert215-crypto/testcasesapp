@@ -5,6 +5,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 import { loadSpreadsheetModule, parseSheet } from '@/lib/fileParser';
+import { fitImagesWithinCloudPayloadBudget, optimizeImageForAi } from '@/lib/imageOptimizer';
 
 interface AuditEnhanceProps {
   onAudit: (requirement: string, existingTestCases: Record<string, string>[], imagesBase64?: string[]) => Promise<void>;
@@ -19,11 +20,12 @@ export function AuditEnhance({ onAudit, isAuditing, onClear }: AuditEnhanceProps
   const [images, setImages] = useState<{ preview: string; base64: string }[]>([]);
   const [uploadedFile, setUploadedFile] = useState<{ name: string; rows: Record<string, string>[] } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [isProcessingImages, setIsProcessingImages] = useState(false);
   
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
 
@@ -33,18 +35,42 @@ export function AuditEnhance({ onAudit, isAuditing, onClear }: AuditEnhanceProps
       return;
     }
 
-    const toProcess = Array.from(files).filter(f => f.type.startsWith('image/')).slice(0, remaining);
-    
-    toProcess.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const result = event.target?.result as string;
-        setImages(prev => [...prev, { preview: result, base64: result }]);
-      };
-      reader.readAsDataURL(file);
-    });
+    const toProcess = Array.from(files).slice(0, remaining);
 
     if (imageInputRef.current) imageInputRef.current.value = '';
+
+    setIsProcessingImages(true);
+    const results = await Promise.allSettled(toProcess.map(optimizeImageForAi));
+    const optimizedCandidates = results
+      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof optimizeImageForAi>>> =>
+        result.status === 'fulfilled'
+      )
+      .map((result) => result.value.dataUrl);
+    const { accepted, rejectedCount } = fitImagesWithinCloudPayloadBudget(
+      images.map((image) => image.base64),
+      optimizedCandidates
+    );
+    const optimized = accepted.map((dataUrl) => ({ preview: dataUrl, base64: dataUrl }));
+    const errors = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => (result.reason instanceof Error ? result.reason.message : String(result.reason)));
+    if (rejectedCount > 0) {
+      errors.push(
+        `${rejectedCount} image${rejectedCount === 1 ? '' : 's'} exceeded the combined cloud request limit.`
+      );
+    }
+
+    if (optimized.length > 0) {
+      setImages((current) => [...current, ...optimized]);
+    }
+    if (errors.length > 0) {
+      toast({
+        title: 'Some images were not attached',
+        description: errors.join(' '),
+        variant: 'destructive',
+      });
+    }
+    setIsProcessingImages(false);
   };
 
   const removeImage = (index: number) => {
@@ -200,11 +226,11 @@ export function AuditEnhance({ onAudit, isAuditing, onClear }: AuditEnhanceProps
             <input
               ref={imageInputRef}
               type="file"
-              accept="image/*"
+              accept="image/png,image/jpeg,image/webp,image/gif"
               multiple
               onChange={handleImageUpload}
               className="hidden"
-              disabled={isAuditing}
+              disabled={isAuditing || isProcessingImages}
             />
             
             {images.length > 0 ? (
@@ -263,14 +289,14 @@ export function AuditEnhance({ onAudit, isAuditing, onClear }: AuditEnhanceProps
         <div className="flex gap-3">
           <Button
             onClick={handleAudit}
-            disabled={isAuditing || !hasContent}
+            disabled={isAuditing || isProcessingImages || !hasContent}
             size="lg"
             className="flex-1 gap-2 gradient-primary hover:opacity-90 transition-all shadow-md hover:shadow-glow font-semibold h-12 rounded-xl"
           >
-            {isAuditing ? (
+            {isAuditing || isProcessingImages ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Analyzing gaps...</span>
+                <span>{isProcessingImages ? 'Preparing images...' : 'Analyzing gaps...'}</span>
               </>
             ) : (
               <>

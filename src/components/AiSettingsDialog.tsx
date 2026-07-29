@@ -3,6 +3,7 @@ import { Bot, KeyRound, Settings2 } from 'lucide-react';
 import {
   AiProvider,
   AiSettings,
+  CLAUDE_CLI_MODEL_OPTIONS,
   CLAUDE_MODEL_OPTIONS,
   DEFAULT_AI_SETTINGS,
   GEMINI_MODEL_OPTIONS,
@@ -46,8 +47,14 @@ export function AiSettingsDialog({ settings, migrationNotices = [], isReady, onS
   }, [open, settings]);
 
   const providerLabel = useMemo(
-    () => PROVIDER_OPTIONS.find((option) => option.value === settings.provider)?.label ?? 'OpenAI',
+    () => PROVIDER_OPTIONS.find((option) => option.value === settings.provider)?.label ?? 'Claude Subscription',
     [settings.provider]
+  );
+  const currentClaudeCliOption = useMemo(
+    () =>
+      CLAUDE_CLI_MODEL_OPTIONS.find((option) => option.value === draft.claudeCliModel) ??
+      CLAUDE_CLI_MODEL_OPTIONS[0],
+    [draft.claudeCliModel]
   );
   const currentGeminiOption = useMemo(
     () => GEMINI_MODEL_OPTIONS.find((option) => option.value === draft.geminiModel) ?? GEMINI_MODEL_OPTIONS[0],
@@ -75,8 +82,12 @@ export function AiSettingsDialog({ settings, migrationNotices = [], isReady, onS
     setDraft(DEFAULT_AI_SETTINGS);
   };
 
+  const effectiveStrictRequirementMode = draft.strictRequirementMode || draft.generationMode === 'rob_style';
+
   const currentModelLabel =
-    draft.provider === 'openai'
+    draft.provider === 'claude_cli'
+      ? currentClaudeCliOption.label
+      : draft.provider === 'openai'
       ? currentOpenAiOption.label
       : draft.provider === 'claude'
         ? currentClaudeOption.label
@@ -133,6 +144,7 @@ export function AiSettingsDialog({ settings, migrationNotices = [], isReady, onS
                     setDraft((current) => ({
                       ...current,
                       generationMode: value as AiSettings['generationMode'],
+                      strictRequirementMode: value === 'rob_style' ? true : current.strictRequirementMode,
                     }))
                   }
                   disabled={!isReady}
@@ -162,18 +174,17 @@ export function AiSettingsDialog({ settings, migrationNotices = [], isReady, onS
                 <div className="space-y-1">
                   <Label htmlFor="strict-requirement-mode">Strict exact requirement mode</Label>
                   <p className="text-xs text-muted-foreground">
-                    Keeps AI output closer to exact labels, config keys, fixed logic terms, and stated acceptance
-                    criteria. It also blocks invented setup screens, modals, or config-management flows unless the
-                    requirement explicitly mentions them.
+Default is on. Rob keeps this enabled. Output stays anchored to exact requirement lines, ACs, labels, permissions, fixed logic terms, and stated UI behavior; generic scenario families are blocked unless the requirement supports them.
                   </p>
                 </div>
                 <Switch
                   id="strict-requirement-mode"
-                  checked={draft.strictRequirementMode}
+                  checked={effectiveStrictRequirementMode}
+                  disabled={draft.generationMode === 'rob_style'}
                   onCheckedChange={(checked) =>
                     setDraft((current) => ({
                       ...current,
-                      strictRequirementMode: checked,
+                      strictRequirementMode: current.generationMode === 'rob_style' ? true : checked,
                     }))
                   }
                 />
@@ -204,6 +215,56 @@ export function AiSettingsDialog({ settings, migrationNotices = [], isReady, onS
                   Current model: <span className="font-mono text-foreground">{currentModelLabel}</span>
                 </p>
               </div>
+
+              <ApiKeyField
+                id="hosted-access-token"
+                label="Hosted AI access token"
+                value={draft.hostedAccessToken}
+                onChange={(value) => setDraft((current) => ({ ...current, hostedAccessToken: value }))}
+                placeholder="Enter the private token configured on Vercel"
+                description="Required by hosted Claude Subscription and recommended for every public Vercel AI route. It must match HOSTED_AI_ACCESS_TOKEN. This is an app access credential, not an Anthropic or provider API key; localhost ignores it."
+              />
+
+              {draft.provider === 'claude_cli' && (
+                <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
+                  <div className="rounded-lg border border-border/60 bg-background/70 p-3">
+                    <p className="font-medium text-foreground">No browser API key required</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Localhost uses your installed Claude CLI login. The hosted app calls a protected server that keeps
+                      the Claude subscription token outside the browser and repository.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-3">
+                    <Label htmlFor="claude-cli-model">Claude subscription model</Label>
+                    <Select
+                      value={draft.claudeCliModel}
+                      onValueChange={(value) =>
+                        setDraft((current) => ({
+                          ...current,
+                          claudeCliModel: value as AiSettings['claudeCliModel'],
+                        }))
+                      }
+                    >
+                      <SelectTrigger id="claude-cli-model" className="h-11 border-border/60 bg-background">
+                        <SelectValue placeholder="Choose a Claude CLI model" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CLAUDE_CLI_MODEL_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">{currentClaudeCliOption.description}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Claude CLI model alias:{' '}
+                      <span className="font-mono text-foreground">{currentClaudeCliOption.value}</span>.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {draft.provider === 'openai' && (
                 <div className="space-y-4 rounded-xl border border-border/60 bg-muted/20 p-4">
@@ -406,14 +467,14 @@ export function AiSettingsDialog({ settings, migrationNotices = [], isReady, onS
               )}
 
               <div className="rounded-xl border border-dashed border-border/60 bg-muted/10 p-4 text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">Stored locally</p>
+                <p className="font-medium text-foreground">Provider settings and API-key safety</p>
                 <p className="mt-1">
-                  These keys are saved only in your browser&apos;s local storage. In localhost mode with your local
-                  backend, they are sent with each AI request so the edge functions can use your chosen provider.
+                  Provider, model, style, and optional API keys are saved in this browser&apos;s local storage.
+                  Claude Subscription never needs or stores an API key in the browser.
                 </p>
                 <p className="mt-2">
-                  In a hosted deployment, the app sends your provider, model, and style selection but expects the real
-                  provider key to come from server-side environment variables such as Vercel Environment Variables.
+                  In hosted deployments, provider secrets must come from server-side environment variables. Browser
+                  API keys are ignored by the hosted backend so they cannot override protected cloud credentials.
                 </p>
                 <p className="mt-2">
                   Use this only on your own machine. Browser local storage is convenient for personal local use, not a
@@ -446,9 +507,10 @@ interface ApiKeyFieldProps {
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
+  description?: string;
 }
 
-function ApiKeyField({ id, label, value, onChange, placeholder }: ApiKeyFieldProps) {
+function ApiKeyField({ id, label, value, onChange, placeholder, description }: ApiKeyFieldProps) {
   return (
     <div className="grid gap-3 rounded-xl border border-border/60 bg-muted/20 p-4">
       <Label htmlFor={id} className="flex items-center gap-2">
@@ -465,6 +527,7 @@ function ApiKeyField({ id, label, value, onChange, placeholder }: ApiKeyFieldPro
         spellCheck={false}
         className="h-11 border-border/60 bg-background font-mono"
       />
+      {description && <p className="text-xs text-muted-foreground">{description}</p>}
     </div>
   );
 }

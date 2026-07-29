@@ -7,6 +7,8 @@ import { TemplateLibrary } from './TemplateLibrary';
 import { GenerationProgress } from './GenerationProgress';
 import { InputType } from '@/types/testCase';
 import { GenerationStage } from '@/hooks/useTestCaseGenerator';
+import { useToast } from '@/hooks/use-toast';
+import { fitImagesWithinCloudPayloadBudget, optimizeImageForAi } from '@/lib/imageOptimizer';
 
 const MAX_IMAGES = 5;
 
@@ -39,7 +41,9 @@ export function TestCaseInput({ onGenerate, isLoading, stage, stageMessage, onCl
   const [inputType, setInputType] = useState<InputType>('requirement');
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [imagesBase64, setImagesBase64] = useState<string[]>([]);
+  const [isProcessingImages, setIsProcessingImages] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
 
   const handleGenerate = async () => {
     await onGenerate(input, inputType, imagesBase64.length > 0 ? imagesBase64 : undefined);
@@ -52,26 +56,58 @@ export function TestCaseInput({ onGenerate, isLoading, stage, stageMessage, onCl
     onClear();
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
 
     const remaining = MAX_IMAGES - imagesBase64.length;
-    const toProcess = files.filter(f => f.type.startsWith('image/')).slice(0, remaining);
-
-    toProcess.forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const result = event.target?.result as string;
-        setImagePreviews(prev => [...prev, result]);
-        setImagesBase64(prev => [...prev, result]);
-      };
-      reader.readAsDataURL(file);
-    });
+    const toProcess = files.slice(0, remaining);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+
+    if (remaining <= 0) {
+      toast({
+        title: 'Maximum images reached',
+        description: `You can attach up to ${MAX_IMAGES} screenshots.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsProcessingImages(true);
+    const results = await Promise.allSettled(toProcess.map(optimizeImageForAi));
+    const optimizedCandidates = results
+      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof optimizeImageForAi>>> =>
+        result.status === 'fulfilled'
+      )
+      .map((result) => result.value.dataUrl);
+    const { accepted: optimized, rejectedCount } = fitImagesWithinCloudPayloadBudget(
+      imagesBase64,
+      optimizedCandidates
+    );
+    const errors = results
+      .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+      .map((result) => (result.reason instanceof Error ? result.reason.message : String(result.reason)));
+    if (rejectedCount > 0) {
+      errors.push(
+        `${rejectedCount} image${rejectedCount === 1 ? '' : 's'} exceeded the combined cloud request limit.`
+      );
+    }
+
+    if (optimized.length > 0) {
+      setImagePreviews((current) => [...current, ...optimized]);
+      setImagesBase64((current) => [...current, ...optimized]);
+    }
+    if (errors.length > 0) {
+      toast({
+        title: 'Some images were not attached',
+        description: errors.join(' '),
+        variant: 'destructive',
+      });
+    }
+    setIsProcessingImages(false);
   };
 
   const removeImage = (index: number) => {
@@ -116,11 +152,11 @@ export function TestCaseInput({ onGenerate, isLoading, stage, stageMessage, onCl
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/webp,image/gif"
             multiple
             onChange={handleImageUpload}
             className="hidden"
-            disabled={isLoading}
+            disabled={isLoading || isProcessingImages}
           />
           
           <div className="flex flex-wrap gap-3">
@@ -147,7 +183,7 @@ export function TestCaseInput({ onGenerate, isLoading, stage, stageMessage, onCl
               <Button
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isLoading}
+                disabled={isLoading || isProcessingImages}
                 className="gap-2 border-dashed border-border/60 hover:bg-muted/50 h-24 w-24 rounded-xl flex flex-col items-center justify-center"
               >
                 <ImagePlus className="h-5 w-5 text-muted-foreground" />
@@ -166,14 +202,14 @@ export function TestCaseInput({ onGenerate, isLoading, stage, stageMessage, onCl
         <div className="flex gap-3">
           <Button
             onClick={handleGenerate}
-            disabled={isLoading || !hasContent}
+            disabled={isLoading || isProcessingImages || !hasContent}
             size="lg"
             className="flex-1 gap-2 gradient-primary hover:opacity-90 transition-all shadow-md hover:shadow-glow font-semibold h-12 rounded-xl"
           >
-            {isLoading ? (
+            {isLoading || isProcessingImages ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin" />
-                <span>Generating...</span>
+                <span>{isProcessingImages ? 'Preparing images...' : 'Generating...'}</span>
               </>
             ) : (
               <>

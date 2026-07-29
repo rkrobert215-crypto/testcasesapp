@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Test Case Generator Claude CLI Lambda container
+
+Parameters:
+  ImageUri:
+    Type: String
+  FunctionName:
+    Type: String
+    Default: testcasesapp-claude
+  LambdaProxyToken:
+    Type: String
+    NoEcho: true
+  ClaudeCodeOAuthToken:
+    Type: String
+    NoEcho: true
+  OpenAiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+  GeminiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+  GroqApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+  OpenRouterApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: WriteFunctionLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  ClaudeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref FunctionName
+      PackageType: Image
+      Code:
+        ImageUri: !Ref ImageUri
+      Architectures:
+        - x86_64
+      MemorySize: 2048
+      Timeout: 900
+      EphemeralStorage:
+        Size: 2048
+      ReservedConcurrentExecutions: 1
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          CLAUDE_CLI_PATH: /usr/local/bin/claude
+          CLAUDE_CODE_TIMEOUT_MS: '250000'
+          CLAUDE_CODE_OAUTH_TOKEN: !Ref ClaudeCodeOAuthToken
+          LAMBDA_PROXY_TOKEN: !Ref LambdaProxyToken
+          OPENAI_API_KEY: !Ref OpenAiApiKey
+          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          GEMINI_API_KEY: !Ref GeminiApiKey
+          GROQ_API_KEY: !Ref GroqApiKey
+          OPENROUTER_API_KEY: !Ref OpenRouterApiKey
+
+  ClaudeFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${FunctionName}
+      RetentionInDays: 7
+
+  ClaudeFunctionUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt ClaudeFunction.Arn
+      AuthType: NONE
+      InvokeMode: BUFFERED
+
+  ClaudeFunctionUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ClaudeFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: '*'
+      FunctionUrlAuthType: NONE
+
+  ClaudeFunctionInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ClaudeFunction
+      Action: lambda:InvokeFunction
+      Principal: '*'
+      InvokedViaFunctionUrl: true
+
+Outputs:
+  LambdaFunctionUrl:
+    Description: Private-by-token upstream URL for the Cloudflare Worker
+    Value: !GetAtt ClaudeFunctionUrl.FunctionUrl
+  LambdaFunctionName:
+    Value: !Ref ClaudeFunction
