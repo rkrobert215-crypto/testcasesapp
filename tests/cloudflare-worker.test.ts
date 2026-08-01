@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createWorker } from '../cloud/cloudflare/worker.js';
 
 const credentials = `Basic ${Buffer.from('qa-user:strong-pass').toString('base64')}`;
+
+test('Wrangler invokes the authentication Worker before every static asset', () => {
+  const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
+  assert.equal(config.assets.run_worker_first, true);
+});
 
 function environment() {
   return {
