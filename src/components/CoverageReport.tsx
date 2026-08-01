@@ -1,4 +1,4 @@
-import { CheckCircle, AlertTriangle, XCircle, Lightbulb, Target, X, Copy, Sparkles } from 'lucide-react';
+import { CheckCircle, AlertTriangle, XCircle, Lightbulb, ListPlus, Target, X, Copy, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CoverageResult, MissingScenario } from '@/hooks/useCoverageValidator';
 import { cn } from '@/lib/utils';
@@ -8,8 +8,10 @@ interface CoverageReportProps {
   result: CoverageResult;
   onClose: () => void;
   onGenerateMissingScenario?: (scenario: MissingScenario) => void;
-  onGenerateAllMissingScenarios?: () => void;
-  isGeneratingMissingScenarios?: boolean;
+  onGenerateRecommendation?: (recommendation: string, index: number) => void;
+  onGenerateAllImprovements?: () => void;
+  onAddAllImprovements?: () => void;
+  isGeneratingImprovements?: boolean;
 }
 
 const PRIORITY_COLORS = {
@@ -31,9 +33,12 @@ export function CoverageReport({
   result,
   onClose,
   onGenerateMissingScenario,
-  onGenerateAllMissingScenarios,
-  isGeneratingMissingScenarios = false,
+  onGenerateRecommendation,
+  onGenerateAllImprovements,
+  onAddAllImprovements,
+  isGeneratingImprovements = false,
 }: CoverageReportProps) {
+  const hasImprovements = result.missingScenarios.length > 0 || result.recommendations.length > 0;
   const getScoreIcon = () => {
     if (result.coverageScore >= 90) return <CheckCircle className="h-8 w-8 text-positive" />;
     if (result.coverageScore >= 70) return <AlertTriangle className="h-8 w-8 text-edge" />;
@@ -78,19 +83,7 @@ export function CoverageReport({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {result.missingScenarios.length > 0 && onGenerateAllMissingScenarios && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onGenerateAllMissingScenarios}
-              disabled={isGeneratingMissingScenarios}
-              className="text-primary-foreground hover:bg-primary-foreground/20 gap-1.5 text-xs"
-            >
-              <Sparkles className="h-4 w-4" />
-              {isGeneratingMissingScenarios ? 'Generating...' : 'Generate All Gaps'}
-            </Button>
-          )}
-          {result.missingScenarios.length > 0 && (
+          {hasImprovements && (
             <Button
               variant="ghost"
               size="sm"
@@ -125,6 +118,44 @@ export function CoverageReport({
             <p className="text-sm text-muted-foreground mt-1">{result.summary}</p>
           </div>
         </div>
+
+        {hasImprovements && (onGenerateAllImprovements || onAddAllImprovements) && (
+          <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold text-foreground">Convert coverage findings into complete testcases</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Missing scenarios and testable recommendations become full AI-generated rows. Existing cases are preserved and duplicates are skipped.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {onGenerateAllImprovements && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={onGenerateAllImprovements}
+                    disabled={isGeneratingImprovements}
+                    className="gap-1.5"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {isGeneratingImprovements ? 'Generating...' : 'Generate & Review All'}
+                  </Button>
+                )}
+                {onAddAllImprovements && (
+                  <Button
+                    size="sm"
+                    onClick={onAddAllImprovements}
+                    disabled={isGeneratingImprovements}
+                    className="gap-1.5 gradient-primary hover:opacity-90"
+                  >
+                    <ListPlus className="h-4 w-4" />
+                    {isGeneratingImprovements ? 'Generating...' : 'Generate & Add All'}
+                  </Button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {result.coveredAreas.length > 0 && (
           <div>
@@ -177,7 +208,7 @@ export function CoverageReport({
                       size="sm"
                       variant="outline"
                       onClick={() => onGenerateMissingScenario(scenario)}
-                      disabled={isGeneratingMissingScenarios}
+                      disabled={isGeneratingImprovements}
                       className="gap-1.5 shrink-0"
                     >
                       <Sparkles className="h-3.5 w-3.5" />
@@ -196,11 +227,23 @@ export function CoverageReport({
               <Lightbulb className="h-4 w-4 text-primary" />
               Recommendations
             </h3>
-            <ul className="space-y-1.5">
+            <ul className="space-y-2">
               {result.recommendations.map((recommendation, index) => (
-                <li key={index} className="text-sm text-muted-foreground flex items-start gap-2">
-                  <span className="text-primary mt-1">•</span>
-                  <span>{recommendation}</span>
+                <li key={index} className="flex items-start gap-3 rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground">
+                  <span className="mt-0.5 text-primary" aria-hidden="true">&bull;</span>
+                  <span className="min-w-0 flex-1">{recommendation}</span>
+                  {onGenerateRecommendation && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onGenerateRecommendation(recommendation, index)}
+                      disabled={isGeneratingImprovements}
+                      className="shrink-0 gap-1.5"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      Convert to Testcase
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>

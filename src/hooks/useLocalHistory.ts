@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { HistoryEntry, TestCase, InputType } from '@/types/testCase';
 
 const STORAGE_KEY = 'testcase-generator-history';
@@ -8,28 +8,11 @@ const MAX_HISTORY = 20;
 
 export function useLocalHistory() {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
+  const pendingImagesRef = useRef(new Map<string, string[]>());
 
   useEffect(() => {
-    let cancelled = false;
-    const storedEntries = readStoredHistory();
-    setHistory(storedEntries);
-
-    void hydrateHistoryImages(storedEntries).then((hydratedEntries) => {
-      if (!cancelled) {
-        setHistory((currentHistory) => {
-          const hydratedById = new Map(hydratedEntries.map((entry) => [entry.id, entry]));
-          const currentIds = new Set(currentHistory.map((entry) => entry.id));
-          return [
-            ...currentHistory.map((entry) => hydratedById.get(entry.id) || entry),
-            ...hydratedEntries.filter((entry) => !currentIds.has(entry.id)),
-          ].slice(0, MAX_HISTORY);
-        });
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
+    const timeoutId = window.setTimeout(() => setHistory(readStoredHistory()), 0);
+    return () => window.clearTimeout(timeoutId);
   }, []);
 
   const saveToHistory = (
@@ -40,13 +23,13 @@ export function useLocalHistory() {
   ) => {
     if (testCases.length === 0) return;
 
+    const imagesBase64 = options?.imagesBase64?.filter((image) => image.trim().length > 0);
     const entry: HistoryEntry = {
       id: crypto.randomUUID(),
       timestamp: Date.now(),
       inputType,
       inputSummary: options?.inputSummary || inputText.slice(0, 100) + (inputText.length > 100 ? '...' : ''),
       inputText,
-      imagesBase64: options?.imagesBase64,
       testCases,
     };
 
@@ -60,12 +43,27 @@ export function useLocalHistory() {
       return persistedHistory;
     });
 
-    if (entry.imagesBase64?.length) {
-      void saveHistoryImages(entry.id, entry.imagesBase64);
+    if (imagesBase64?.length) {
+      pendingImagesRef.current.set(entry.id, imagesBase64);
+      void saveHistoryImages(entry.id, imagesBase64).then((saved) => {
+        if (saved && pendingImagesRef.current.get(entry.id) === imagesBase64) {
+          pendingImagesRef.current.delete(entry.id);
+        }
+      });
     }
   };
 
+  const loadHistoryEntry = async (entry: HistoryEntry) => {
+    const imagesBase64 =
+      entry.imagesBase64?.length
+        ? entry.imagesBase64
+        : pendingImagesRef.current.get(entry.id) || await getHistoryImages(entry.id);
+
+    return imagesBase64?.length ? { ...entry, imagesBase64 } : entry;
+  };
+
   const deleteEntry = (id: string) => {
+    pendingImagesRef.current.delete(id);
     setHistory((currentHistory) => {
       const nextHistory = currentHistory.filter((entry) => entry.id !== id);
       persistHistoryMetadata(nextHistory);
@@ -75,6 +73,7 @@ export function useLocalHistory() {
   };
 
   const clearHistory = () => {
+    pendingImagesRef.current.clear();
     setHistory([]);
     localStorage.removeItem(STORAGE_KEY);
     void clearHistoryImages();
@@ -82,6 +81,7 @@ export function useLocalHistory() {
 
   return {
     history,
+    loadHistoryEntry,
     saveToHistory,
     deleteEntry,
     clearHistory,
@@ -103,12 +103,16 @@ function readStoredHistory(): HistoryEntry[] {
     const entries = parsed.filter(isHistoryEntry).slice(0, MAX_HISTORY);
     const legacyEntriesWithImages = entries.filter((entry) => entry.imagesBase64?.length);
     if (legacyEntriesWithImages.length > 0) {
-      for (const entry of legacyEntriesWithImages) {
-        void saveHistoryImages(entry.id, entry.imagesBase64 || []);
-      }
-      persistHistoryMetadata(entries);
+      void Promise.all(
+        legacyEntriesWithImages.map((entry) => saveHistoryImages(entry.id, entry.imagesBase64 || []))
+      ).then((saved) => {
+        if (saved.every(Boolean)) {
+          persistHistoryMetadata(entries);
+        }
+      });
+      return entries.map(stripHistoryImages);
     }
-    return entries;
+    return entries.map(stripHistoryImages);
   } catch {
     return [];
   }
@@ -117,44 +121,24 @@ function readStoredHistory(): HistoryEntry[] {
 function persistHistoryMetadata(entries: HistoryEntry[]) {
   for (let retainedCount = entries.length; retainedCount >= 0; retainedCount -= 1) {
     const retainedEntries = entries.slice(0, retainedCount);
-    const metadataOnly = retainedEntries.map((entry) => {
-      const metadata = { ...entry };
-      delete metadata.imagesBase64;
-      return metadata;
-    });
+    const metadataOnly = retainedEntries.map(stripHistoryImages);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(metadataOnly));
-      return retainedEntries;
+      return metadataOnly;
     } catch (error) {
       if (!isStorageQuotaError(error)) {
         console.warn('Unable to persist testcase history:', error);
-        return retainedEntries;
+        return metadataOnly;
       }
     }
   }
   return [];
 }
 
-async function hydrateHistoryImages(entries: HistoryEntry[]) {
-  if (!supportsIndexedDb()) {
-    return entries;
-  }
-
-  return await Promise.all(
-    entries.map(async (entry) => {
-      if (entry.imagesBase64?.length) {
-        return entry;
-      }
-      const imagesBase64 = await getHistoryImages(entry.id);
-      return imagesBase64?.length ? { ...entry, imagesBase64 } : entry;
-    })
-  );
-}
-
 function saveHistoryImages(id: string, imagesBase64: string[]) {
-  return withImageStore<void>('readwrite', (store, resolve, reject) => {
+  return withImageStore<boolean>('readwrite', (store, resolve, reject) => {
     const request = store.put(imagesBase64, id);
-    request.onsuccess = () => resolve();
+    request.onsuccess = () => resolve(true);
     request.onerror = () => reject(request.error);
   });
 }
@@ -193,27 +177,63 @@ function withImageStore<T>(
   }
 
   return new Promise<T>((resolve, reject) => {
+    let wasBlocked = false;
     const openRequest = indexedDB.open(IMAGE_DB_NAME, 1);
     openRequest.onupgradeneeded = () => {
       if (!openRequest.result.objectStoreNames.contains(IMAGE_STORE_NAME)) {
         openRequest.result.createObjectStore(IMAGE_STORE_NAME);
       }
     };
+    openRequest.onblocked = () => {
+      wasBlocked = true;
+      reject(new Error('History image database is blocked by another tab.'));
+    };
     openRequest.onerror = () => reject(openRequest.error);
     openRequest.onsuccess = () => {
       const database = openRequest.result;
+      if (wasBlocked) {
+        database.close();
+        return;
+      }
+
       const transaction = database.transaction(IMAGE_STORE_NAME, mode);
-      transaction.oncomplete = () => database.close();
+      let hasResult = false;
+      let result: T;
+      transaction.oncomplete = () => {
+        database.close();
+        if (hasResult) {
+          resolve(result);
+        } else {
+          reject(new Error('History image transaction completed without a result.'));
+        }
+      };
+      transaction.onabort = () => {
+        database.close();
+        reject(transaction.error || new Error('History image transaction was aborted.'));
+      };
       transaction.onerror = () => {
         database.close();
         reject(transaction.error);
       };
-      action(transaction.objectStore(IMAGE_STORE_NAME), resolve, reject);
+      action(
+        transaction.objectStore(IMAGE_STORE_NAME),
+        (value) => {
+          result = value;
+          hasResult = true;
+        },
+        reject
+      );
     };
   }).catch((error) => {
-    console.warn('Unable to persist testcase history images:', error);
+    console.warn('Unable to access testcase history images:', error);
     return undefined as T;
   });
+}
+
+function stripHistoryImages(entry: HistoryEntry): HistoryEntry {
+  const metadata = { ...entry };
+  delete metadata.imagesBase64;
+  return metadata;
 }
 
 function isHistoryEntry(value: unknown): value is HistoryEntry {

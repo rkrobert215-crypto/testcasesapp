@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy, startTransition, useEffect, useRef, useState } from 'react';
 import { Header } from '@/components/Header';
 import { TestCaseInput } from '@/components/TestCaseInput';
 import { HistoryPanel } from '@/components/HistoryPanel';
@@ -9,7 +9,7 @@ import { useArtifactHistory } from '@/hooks/useArtifactHistory';
 import { useCoverageValidator } from '@/hooks/useCoverageValidator';
 import { useSmartMerge } from '@/hooks/useSmartMerge';
 import { useAuditEnhance } from '@/hooks/useAuditEnhance';
-import { InputType, TestCase } from '@/types/testCase';
+import { HistoryEntry, InputType, TestCase } from '@/types/testCase';
 import { getUniqueAdditionalTestCases, mergeTestCasesPreservingExisting } from '@/lib/mergeTestCases';
 import { invokeWithRetry } from '@/lib/retryWithBackoff';
 import { parsedRowsToTestCases } from '@/lib/parsedRowsToTestCases';
@@ -17,7 +17,7 @@ import { describeAiError } from '@/lib/providerErrors';
 import { toast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { Zap, FileSpreadsheet, Sparkles, BookOpen, Brain, FileCheck2, ShieldCheck } from 'lucide-react';
+import { Zap, FileSpreadsheet, Sparkles, BookOpen, Brain, FileCheck2, ListPlus, ShieldCheck } from 'lucide-react';
 
 const RequirementAnalysisTab = lazy(() =>
   import('@/components/RequirementAnalysisTab').then((module) => ({ default: module.RequirementAnalysisTab }))
@@ -60,7 +60,7 @@ function PanelFallback({ label = 'Loading section...' }: { label?: string }) {
 
 export default function Index() {
   const { isLoading, testCases, stage, stageMessage, generateTestCases, clearTestCases, setTestCases } = useTestCaseGenerator();
-  const { history, saveToHistory, deleteEntry, clearHistory } = useLocalHistory();
+  const { history, loadHistoryEntry, saveToHistory, deleteEntry, clearHistory } = useLocalHistory();
   const { artifactHistory, saveArtifact, deleteArtifact, clearArtifacts } = useArtifactHistory();
   const { isValidating, coverageResult, validateCoverage, clearCoverageResult } = useCoverageValidator();
   const { isProcessing, processMerge, diffData, clearDiff } = useSmartMerge();
@@ -70,8 +70,13 @@ export default function Index() {
   const [lastInputType, setLastInputType] = useState<InputType>('requirement');
   const [lastImagesBase64, setLastImagesBase64] = useState<string[] | undefined>();
   const [activeTab, setActiveTab] = useState('generate');
-  const [isGeneratingCoverageGaps, setIsGeneratingCoverageGaps] = useState(false);
+  const [isGeneratingCoverageImprovements, setIsGeneratingCoverageImprovements] = useState(false);
   const [pendingCoverageGapCases, setPendingCoverageGapCases] = useState<TestCase[]>([]);
+  const latestCoverageContextRef = useRef({ testCases, lastInput, lastInputType, lastImagesBase64 });
+
+  useEffect(() => {
+    latestCoverageContextRef.current = { testCases, lastInput, lastInputType, lastImagesBase64 };
+  }, [testCases, lastInput, lastInputType, lastImagesBase64]);
 
   const handleGenerate = async (input: string, inputType: InputType, imagesBase64?: string[]) => {
     setLastInput(input);
@@ -100,11 +105,15 @@ export default function Index() {
     validateCoverage(lastInput, lastInputType, testCases, lastImagesBase64);
   };
 
-  const handleGenerateCoverageGapCases = async (scenarioIndexes?: number[]) => {
-    if (!coverageResult || coverageResult.missingScenarios.length === 0) {
+  const handleGenerateCoverageCases = async (options: {
+    scenarioIndexes?: number[];
+    recommendationIndexes?: number[];
+    mergeImmediately?: boolean;
+  } = {}) => {
+    if (!coverageResult || (coverageResult.missingScenarios.length === 0 && coverageResult.recommendations.length === 0)) {
       toast({
-        title: 'No missing scenarios',
-        description: 'Run coverage validation first to identify any gaps.',
+        title: 'No coverage improvements',
+        description: 'Run coverage validation first to identify gaps or recommendations.',
       });
       return;
     }
@@ -118,52 +127,89 @@ export default function Index() {
       return;
     }
 
-    const selectedScenarios =
-      scenarioIndexes && scenarioIndexes.length > 0
-        ? coverageResult.missingScenarios.filter((_, index) => scenarioIndexes.includes(index))
-        : coverageResult.missingScenarios;
+    const sourceContext = { testCases, lastInput, lastInputType, lastImagesBase64 };
+    const hasExplicitSelection =
+      typeof options.scenarioIndexes !== 'undefined' || typeof options.recommendationIndexes !== 'undefined';
+    const selectedScenarios = typeof options.scenarioIndexes !== 'undefined'
+      ? coverageResult.missingScenarios.filter((_, index) => options.scenarioIndexes?.includes(index))
+      : hasExplicitSelection ? [] : coverageResult.missingScenarios;
+    const selectedRecommendations = typeof options.recommendationIndexes !== 'undefined'
+      ? coverageResult.recommendations.filter((_, index) => options.recommendationIndexes?.includes(index))
+      : hasExplicitSelection ? [] : coverageResult.recommendations;
 
-    if (selectedScenarios.length === 0) {
+    if (selectedScenarios.length === 0 && selectedRecommendations.length === 0) {
       toast({
-        title: 'No scenarios selected',
-        description: 'Choose at least one missing scenario to generate.',
+        title: 'Nothing selected',
+        description: 'Choose at least one missing scenario or recommendation to convert.',
       });
       return;
     }
 
-    setIsGeneratingCoverageGaps(true);
+    setIsGeneratingCoverageImprovements(true);
 
     try {
       const data = await invokeWithRetry('audit-test-cases', {
-        requirement: lastInput,
-        existingTestCases: testCases,
-        imagesBase64: lastImagesBase64,
+        requirement: sourceContext.lastInput,
+        existingTestCases: sourceContext.testCases,
+        imagesBase64: sourceContext.lastImagesBase64,
         focusMissingScenarios: selectedScenarios.map((scenario) => scenario.scenario),
+        focusRecommendations: selectedRecommendations,
       });
 
+      const latestContext = latestCoverageContextRef.current;
+      if (
+        latestContext.testCases !== sourceContext.testCases ||
+        latestContext.lastInput !== sourceContext.lastInput ||
+        latestContext.lastInputType !== sourceContext.lastInputType ||
+        latestContext.lastImagesBase64 !== sourceContext.lastImagesBase64
+      ) {
+        toast({
+          title: 'Suite changed while generating',
+          description: 'The generated improvements were not applied to a different suite. Run Check Coverage again on the current table.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
       const generatedCases = data.testCases || [];
-      const uniqueGapCases = getUniqueAdditionalTestCases(testCases, generatedCases);
+      const uniqueGapCases = getUniqueAdditionalTestCases(sourceContext.testCases, generatedCases);
       const addedCount = uniqueGapCases.length;
 
       if (addedCount === 0) {
         toast({
-          title: 'No new cases generated',
-          description: 'The generated coverage-gap cases were already present in the testcase list.',
+          title: 'No new executable cases',
+          description: 'The improvements were already covered, duplicated existing cases, or contained process-only advice.',
+        });
+        return;
+      }
+
+      if (options.mergeImmediately) {
+        const mergedSuite = mergeTestCasesPreservingExisting(sourceContext.testCases, uniqueGapCases);
+        setTestCases(mergedSuite);
+        setPendingCoverageGapCases([]);
+        clearCoverageResult();
+        saveToHistory(sourceContext.lastInputType, sourceContext.lastInput, mergedSuite, {
+          inputSummary: `${sourceContext.lastInput.slice(0, 80) || 'Current suite'} - coverage improved`,
+          imagesBase64: sourceContext.lastImagesBase64,
+        });
+        toast({
+          title: 'Coverage cases added',
+          description: `Added ${addedCount} professional testcase${addedCount > 1 ? 's' : ''} to the main table without changing existing cases.`,
         });
         return;
       }
 
       setPendingCoverageGapCases(uniqueGapCases);
       toast({
-        title: 'Review generated cases',
-        description: `Generated ${addedCount} missing testcase${addedCount > 1 ? 's' : ''}. Review and choose what to merge.`,
+        title: 'Review generated improvements',
+        description: `Generated ${addedCount} professional testcase${addedCount > 1 ? 's' : ''}. Review and choose what to add.`,
       });
     } catch (error) {
       console.error('Error generating coverage-gap test cases:', error);
       const aiError = describeAiError(
         error,
-        'Gap generation failed',
-        'Failed to generate missing testcases from the coverage gaps.'
+        'Coverage improvement failed',
+        'Failed to convert the coverage gaps and recommendations into complete testcases.'
       );
       toast({
         title: aiError.title,
@@ -171,7 +217,7 @@ export default function Index() {
         variant: 'destructive',
       });
     } finally {
-      setIsGeneratingCoverageGaps(false);
+      setIsGeneratingCoverageImprovements(false);
     }
   };
 
@@ -236,12 +282,41 @@ export default function Index() {
       return;
     }
 
-    setTestCases((prev) => mergeTestCasesPreservingExisting(prev, selectedCases));
+    const uniqueSelectedCases = getUniqueAdditionalTestCases(testCases, selectedCases);
+    if (uniqueSelectedCases.length === 0) {
+      setPendingCoverageGapCases([]);
+      toast({
+        title: 'Cases already present',
+        description: 'The selected coverage cases are already in the main table.',
+      });
+      return;
+    }
+
+    const mergedSuite = mergeTestCasesPreservingExisting(testCases, uniqueSelectedCases);
+    setTestCases(mergedSuite);
     setPendingCoverageGapCases([]);
     clearCoverageResult();
+    saveToHistory(lastInputType, lastInput, mergedSuite, {
+      inputSummary: `${lastInput.slice(0, 80) || 'Current suite'} - coverage improved`,
+      imagesBase64: lastImagesBase64,
+    });
     toast({
-      title: 'Cases merged',
-      description: `Merged ${selectedCases.length} reviewed testcase${selectedCases.length > 1 ? 's' : ''} into the current suite.`,
+      title: 'Cases added',
+      description: `Added ${uniqueSelectedCases.length} reviewed testcase${uniqueSelectedCases.length > 1 ? 's' : ''} to the main table without changing existing cases.`,
+    });
+  };
+
+  const handleLoadHistoryEntry = async (entry: HistoryEntry) => {
+    const restoredEntry = await loadHistoryEntry(entry);
+    startTransition(() => {
+      setTestCases(restoredEntry.testCases);
+      setLastInput(restoredEntry.inputText || '');
+      setLastInputType(restoredEntry.inputType);
+      setLastImagesBase64(restoredEntry.imagesBase64);
+      setPendingCoverageGapCases([]);
+      clearCoverageResult();
+      clearDiff();
+      setActiveTab('generate');
     });
   };
 
@@ -370,17 +445,28 @@ export default function Index() {
                   <ShieldCheck className="h-4 w-4" />
                   {isValidating ? 'Checking Coverage...' : 'Check Coverage'}
                 </Button>
-                {coverageResult && coverageResult.missingScenarios.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleGenerateCoverageGapCases()}
-                    disabled={isGeneratingCoverageGaps}
-                    className="gap-2"
-                  >
-                    <Sparkles className="h-4 w-4" />
-                    {isGeneratingCoverageGaps ? 'Generating Missing Cases...' : 'Generate Missing Cases'}
-                  </Button>
+                {coverageResult && (coverageResult.missingScenarios.length > 0 || coverageResult.recommendations.length > 0) && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleGenerateCoverageCases()}
+                      disabled={isGeneratingCoverageImprovements}
+                      className="gap-2"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      {isGeneratingCoverageImprovements ? 'Generating...' : 'Generate & Review All'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => handleGenerateCoverageCases({ mergeImmediately: true })}
+                      disabled={isGeneratingCoverageImprovements}
+                      className="gap-2 gradient-primary hover:opacity-90"
+                    >
+                      <ListPlus className="h-4 w-4" />
+                      {isGeneratingCoverageImprovements ? 'Generating...' : 'Generate & Add All'}
+                    </Button>
+                  </>
                 )}
               </div>
             )}
@@ -411,11 +497,15 @@ export default function Index() {
                         item.type === scenario.type
                     );
                     if (index !== -1) {
-                      handleGenerateCoverageGapCases([index]);
+                      handleGenerateCoverageCases({ scenarioIndexes: [index], recommendationIndexes: [] });
                     }
                   }}
-                  onGenerateAllMissingScenarios={() => handleGenerateCoverageGapCases()}
-                  isGeneratingMissingScenarios={isGeneratingCoverageGaps}
+                  onGenerateRecommendation={(_, index) => {
+                    handleGenerateCoverageCases({ scenarioIndexes: [], recommendationIndexes: [index] });
+                  }}
+                  onGenerateAllImprovements={() => handleGenerateCoverageCases()}
+                  onAddAllImprovements={() => handleGenerateCoverageCases({ mergeImmediately: true })}
+                  isGeneratingImprovements={isGeneratingCoverageImprovements}
                 />
               </Suspense>
             )}
@@ -438,15 +528,7 @@ export default function Index() {
           <aside className="min-w-0 space-y-4">
             <HistoryPanel
               history={history}
-              onLoad={(entry) => {
-                setTestCases(entry.testCases);
-                setLastInput(entry.inputText || '');
-                setLastInputType(entry.inputType);
-                setLastImagesBase64(entry.imagesBase64);
-                clearCoverageResult();
-                clearDiff();
-                setActiveTab('generate');
-              }}
+              onLoad={handleLoadHistoryEntry}
               onDelete={deleteEntry}
               onClear={clearHistory}
             />

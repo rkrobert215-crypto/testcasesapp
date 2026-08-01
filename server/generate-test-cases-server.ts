@@ -267,7 +267,12 @@ function isDirectServerEntry() {
     return false;
   }
 
-  return fileURLToPath(import.meta.url).toLowerCase() === process.argv[1].toLowerCase();
+  const modulePath = fileURLToPath(import.meta.url).toLowerCase();
+  const entryPath = process.argv[1].toLowerCase();
+  return (
+    modulePath === entryPath &&
+    /generate-test-cases-server\.(?:[cm]?js|ts)$/.test(entryPath.replaceAll('\\', '/'))
+  );
 }
 
 function hydrateLocalEnv() {
@@ -1054,6 +1059,9 @@ async function handleAuditTestCases(body: Record<string, unknown>) {
   const requestedCoverageGaps = Array.isArray(body.focusMissingScenarios)
     ? body.focusMissingScenarios.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
     : [];
+  const requestedCoverageRecommendations = Array.isArray(body.focusRecommendations)
+    ? body.focusRecommendations.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
   const aiSettings = body.aiSettings;
   const generationMode = getGenerationMode(aiSettings);
   const generationProfile = getGenerationModeProfile(generationMode);
@@ -1062,6 +1070,7 @@ async function handleAuditTestCases(body: Record<string, unknown>) {
         requirement,
         existingTestCases,
         focusMissingScenarios: requestedCoverageGaps,
+        focusRecommendations: requestedCoverageRecommendations,
       })
     : null;
 
@@ -1092,6 +1101,8 @@ STRICT RULES:
 - Use professional testcase naming, preferably actor-based.
 - Expected results must be concrete and observable.
 - Do not invent features that are not in the requirement.
+- Convert focused coverage recommendations into executable testcase rows only when they describe verifiable behavior or a real coverage need.
+- Never turn process-only, documentation-only, or clarification advice into fabricated product behavior.
 
 GENERATION STYLE MODE: ${generationProfile.label}
 ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
@@ -1136,6 +1147,14 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
               `Return only NEW testcase rows that cover these missing scenarios. Do not add unrelated extra cases.`,
             ]
           : []),
+        ...(requestedCoverageRecommendations.length > 0
+          ? [
+              `Coverage recommendations to convert into professional testcase rows when testable:`,
+              ...requestedCoverageRecommendations.map((recommendation, index) => `${index + 1}. ${recommendation}`),
+              ``,
+              `For every testable recommendation, generate one or more complete executable testcase rows. Do not copy recommendation text into a testcase row, and do not fabricate behavior for process-only advice.`,
+            ]
+          : []),
         ``,
         `Return only NEW or materially improved cases that cover missing or weak areas.`,
       ].join('\n'),
@@ -1163,9 +1182,12 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
       ...(requestedCoverageGaps.length > 0
         ? ['Check whether the returned cases directly address the requested missing coverage scenarios instead of drifting into unrelated additions.']
         : []),
+      ...(requestedCoverageRecommendations.length > 0
+        ? ['Check whether every testable recommendation is converted into concrete steps and observable expected results without fabricating unspecified behavior.']
+        : []),
     ],
     correctionReminder:
-      'Return only materially useful new cases that close real coverage gaps and read like an enterprise-ready senior-QA enhancement set.',
+      'Return only materially useful new cases that close real coverage gaps or implement testable recommendations and read like an enterprise-ready senior-QA enhancement set.',
   });
 
   const normalized = deduplicateGeneratedTestCases(normalizeGeneratedTestCases(parsed.testCases || []));

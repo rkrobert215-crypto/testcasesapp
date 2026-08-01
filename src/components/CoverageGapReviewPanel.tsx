@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckSquare, Sparkles, X } from 'lucide-react';
+import { CheckSquare, ListPlus, Sparkles, X } from 'lucide-react';
 import { TestCase } from '@/types/testCase';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -56,9 +56,9 @@ export function CoverageGapReviewPanel({
             <Sparkles className="h-5 w-5 text-primary-foreground" />
           </div>
           <div>
-            <h2 className="text-lg font-bold font-display text-primary-foreground">Review Coverage Gap Cases</h2>
+            <h2 className="text-lg font-bold font-display text-primary-foreground">Review Coverage Improvement Cases</h2>
             <p className="text-xs text-primary-foreground/80">
-              Check the AI-generated missing testcases before they are merged into your suite.
+              Review full testcases generated from missing scenarios and testable recommendations.
             </p>
           </div>
         </div>
@@ -79,7 +79,7 @@ export function CoverageGapReviewPanel({
               {pendingCases.length} generated case{pendingCases.length > 1 ? 's' : ''} ready for review
             </p>
             <p className="text-xs text-muted-foreground">
-              {selectedIds.length} selected. Only selected cases will be merged into the current list.
+              {selectedIds.length} selected. Existing rows remain unchanged when cases are added.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -88,13 +88,23 @@ export function CoverageGapReviewPanel({
               {allSelected ? 'Clear Selection' : 'Select All'}
             </Button>
             <Button
+              variant="outline"
               size="sm"
               onClick={() => onMergeSelected(selectedIds)}
               disabled={selectedIds.length === 0}
-              className="gap-2 gradient-primary hover:opacity-90"
+              className="gap-2"
             >
               <Sparkles className="h-4 w-4" />
-              Merge Selected
+              Add Selected
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => onMergeSelected(pendingCases.map((testCase) => testCase.id))}
+              disabled={pendingCases.length === 0}
+              className="gap-2 gradient-primary hover:opacity-90"
+            >
+              <ListPlus className="h-4 w-4" />
+              Add All to Main Table
             </Button>
           </div>
         </div>
