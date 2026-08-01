@@ -97,7 +97,7 @@ Resources:
     Properties:
       TargetFunctionArn: !GetAtt ClaudeFunction.Arn
       AuthType: NONE
-      InvokeMode: BUFFERED
+      InvokeMode: RESPONSE_STREAM
 
   ClaudeFunctionUrlPermission:
     Type: AWS::Lambda::Permission

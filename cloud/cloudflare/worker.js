@@ -103,10 +103,20 @@ async function proxyAiFunction(request, environment, fetchImpl) {
       method: 'POST',
       headers,
       body,
-      redirect: 'error',
+      redirect: 'manual',
     });
-  } catch {
+  } catch (error) {
+    const diagnostic = error instanceof Error ? `${error.name}: ${error.message}` : 'Unknown error';
+    const redactedDiagnostic = diagnostic.replace(/https?:\/\/\S+/g, '[upstream-url]');
+    console.error(
+      '[cloudflare-worker] Lambda proxy fetch failed:',
+      redactedDiagnostic
+    );
     return secureJson({ error: 'The AI service is temporarily unavailable.' }, 502);
+  }
+
+  if (upstreamResponse.status >= 300 && upstreamResponse.status < 400) {
+    return secureJson({ error: 'The AI service returned an invalid redirect.' }, 502);
   }
 
   return withSecurityHeaders(

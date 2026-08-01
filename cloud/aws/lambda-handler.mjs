@@ -15,6 +15,7 @@ const KNOWN_AI_FUNCTIONS = new Set([
 ]);
 const MAX_REQUEST_BYTES = 5_500_000;
 const MAX_RESPONSE_BYTES = 5_500_000;
+const HEARTBEAT_INTERVAL_MS = 15_000;
 const API_KEY_FIELDS = [
   'hostedAccessToken',
   'openaiApiKey',
@@ -28,6 +29,7 @@ let serverModulePromise;
 export function createLambdaHandler({
   environment = process.env,
   loadServer = defaultLoadServer,
+  onProviderStart = () => {},
 } = {}) {
   return async function lambdaHandler(event) {
     const configuredToken = environment.LAMBDA_PROXY_TOKEN;
@@ -63,6 +65,7 @@ export function createLambdaHandler({
 
     try {
       const server = await loadServer();
+      onProviderStart();
       const result = await server.handleHostedFunctionRequest(functionName, stripBrowserSecrets(body));
       const response = jsonResponse(200, result);
       if (Buffer.byteLength(response.body, 'utf8') > MAX_RESPONSE_BYTES) {
@@ -87,7 +90,59 @@ export function createLambdaHandler({
   };
 }
 
-export const handler = createLambdaHandler();
+export function createStreamingLambdaHandler({
+  lambdaRuntime = globalThis.awslambda,
+  heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS,
+  ...handlerOptions
+} = {}) {
+  if (!lambdaRuntime?.streamifyResponse || !lambdaRuntime?.HttpResponseStream?.from) {
+    return createLambdaHandler(handlerOptions);
+  }
+
+  return lambdaRuntime.streamifyResponse(async (event, responseStream) => {
+    let outputStream = responseStream;
+    let responseStarted = false;
+    let heartbeatTimer;
+
+    const startResponse = () => {
+      if (responseStarted) {
+        return;
+      }
+      responseStarted = true;
+      outputStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
+        statusCode: 200,
+        headers: jsonHeaders(),
+      });
+      outputStream.write(' ');
+      heartbeatTimer = setInterval(() => outputStream.write(' '), heartbeatIntervalMs);
+      heartbeatTimer.unref?.();
+    };
+
+    const bufferedHandler = createLambdaHandler({
+      ...handlerOptions,
+      onProviderStart: startResponse,
+    });
+    const response = await bufferedHandler(event);
+
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+    }
+    if (!responseStarted) {
+      outputStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
+        statusCode: response.statusCode,
+        headers: response.headers,
+      });
+    }
+
+    outputStream.write(response.body);
+    outputStream.end();
+    if (typeof outputStream.finished === 'function') {
+      await outputStream.finished();
+    }
+  });
+}
+
+export const handler = createStreamingLambdaHandler();
 
 async function defaultLoadServer() {
   serverModulePromise ||= import('../../server-dist/generate-test-cases-server.js');
@@ -166,14 +221,18 @@ function constantTimeEqual(left, right) {
 function jsonResponse(statusCode, payload, extraHeaders = {}) {
   return {
     statusCode,
-    headers: {
-      'Cache-Control': 'no-store',
-      'Content-Type': 'application/json; charset=utf-8',
-      'X-Content-Type-Options': 'nosniff',
-      ...extraHeaders,
-    },
+    headers: jsonHeaders(extraHeaders),
     body: JSON.stringify(payload),
     isBase64Encoded: false,
+  };
+}
+
+function jsonHeaders(extraHeaders = {}) {
+  return {
+    'Cache-Control': 'no-store',
+    'Content-Type': 'application/json; charset=utf-8',
+    'X-Content-Type-Options': 'nosniff',
+    ...extraHeaders,
   };
 }
 

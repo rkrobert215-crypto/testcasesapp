@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createLambdaHandler } from '../cloud/aws/lambda-handler.mjs';
+import { createLambdaHandler, createStreamingLambdaHandler } from '../cloud/aws/lambda-handler.mjs';
 
 function event(overrides: Record<string, unknown> = {}) {
   return {
@@ -95,4 +95,67 @@ test('Lambda does not expose stack traces for unexpected failures', async () => 
   assert.deepEqual(JSON.parse(response.body), {
     error: 'The AI service could not complete the request.',
   });
+});
+
+test('Lambda response streaming sends JSON-safe heartbeats before the final payload', async () => {
+  const chunks: string[] = [];
+  let metadata: { statusCode: number; headers: Record<string, string> } | null = null;
+  const responseStream = {
+    write: (chunk: string) => chunks.push(chunk),
+    end: () => undefined,
+    finished: async () => undefined,
+  };
+  const lambdaRuntime = {
+    streamifyResponse: (implementation: unknown) => implementation,
+    HttpResponseStream: {
+      from: (stream: typeof responseStream, nextMetadata: typeof metadata) => {
+        metadata = nextMetadata;
+        return stream;
+      },
+    },
+  };
+  const handler = createStreamingLambdaHandler({
+    lambdaRuntime,
+    heartbeatIntervalMs: 60_000,
+    environment: { LAMBDA_PROXY_TOKEN: 'proxy-secret' },
+    loadServer: async () => ({
+      handleHostedFunctionRequest: async () => ({ testCases: [{ id: 'TC-001' }] }),
+      toProviderFailure: () => null,
+    }),
+  }) as (event: unknown, responseStream: typeof responseStream) => Promise<void>;
+
+  await handler(event(), responseStream);
+
+  assert.equal(metadata?.statusCode, 200);
+  assert.match(metadata?.headers['Content-Type'] || '', /application\/json/);
+  assert.equal(chunks[0], ' ');
+  assert.deepEqual(JSON.parse(chunks.join('')), { testCases: [{ id: 'TC-001' }] });
+});
+
+test('Lambda streaming preserves fast validation status without starting heartbeats', async () => {
+  const chunks: string[] = [];
+  let statusCode = 0;
+  const responseStream = {
+    write: (chunk: string) => chunks.push(chunk),
+    end: () => undefined,
+    finished: async () => undefined,
+  };
+  const lambdaRuntime = {
+    streamifyResponse: (implementation: unknown) => implementation,
+    HttpResponseStream: {
+      from: (stream: typeof responseStream, metadata: { statusCode: number }) => {
+        statusCode = metadata.statusCode;
+        return stream;
+      },
+    },
+  };
+  const handler = createStreamingLambdaHandler({
+    lambdaRuntime,
+    environment: { LAMBDA_PROXY_TOKEN: 'proxy-secret' },
+  }) as (event: unknown, responseStream: typeof responseStream) => Promise<void>;
+
+  await handler(event({ headers: { 'x-testcase-proxy-token': 'wrong' } }), responseStream);
+
+  assert.equal(statusCode, 404);
+  assert.equal(chunks[0], '{"error":"Not found."}');
 });

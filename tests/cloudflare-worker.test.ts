@@ -63,6 +63,7 @@ test('Worker proxies only known AI functions and injects only the private token'
 
   assert.equal(response.status, 200);
   assert.equal(receivedRequest?.url, 'https://lambda.example/api/functions/generate-test-cases');
+  assert.equal(receivedRequest?.init.redirect, 'manual');
   const headers = receivedRequest?.init.headers as Headers;
   assert.equal(headers.get('x-testcase-proxy-token'), 'private-token');
   assert.equal(headers.get('authorization'), null);
@@ -77,6 +78,26 @@ test('Worker proxies only known AI functions and injects only the private token'
     environment()
   );
   assert.equal(unknown.status, 404);
+});
+
+test('Worker rejects Lambda redirects without forwarding the private token', async () => {
+  const worker = createWorker(async () =>
+    new Response(null, {
+      status: 302,
+      headers: { Location: 'https://redirect.example' },
+    })
+  );
+  const response = await worker.fetch(
+    new Request('https://app.example/api/functions/generate-test-cases', {
+      method: 'POST',
+      headers: { Authorization: credentials },
+      body: '{}',
+    }),
+    environment()
+  );
+
+  assert.equal(response.status, 502);
+  assert.deepEqual(await response.json(), { error: 'The AI service returned an invalid redirect.' });
 });
 
 test('Worker rejects a declared oversized request before proxying', async () => {
