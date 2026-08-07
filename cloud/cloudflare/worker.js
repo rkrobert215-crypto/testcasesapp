@@ -119,6 +119,11 @@ async function proxyAiFunction(request, environment, fetchImpl) {
     return secureJson({ error: 'The AI service returned an invalid redirect.' }, 502);
   }
 
+  // Streamed through deliberately: the Lambda emits whitespace heartbeats to stop this
+  // subrequest going idle, and buffering here would discard that. A late Lambda failure
+  // therefore arrives as a 200 whose body carries the real status in `__upstreamStatus`
+  // (see cloud/aws/lambda-handler.mjs); the browser unwraps it in src/lib/retryWithBackoff.ts.
+  // Do not buffer or rewrite the body here.
   return withSecurityHeaders(
     new Response(upstreamResponse.body, {
       status: upstreamResponse.status,

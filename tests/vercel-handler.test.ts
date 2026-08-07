@@ -211,9 +211,110 @@ test('Vercel handler rejects an invalid hosted access token before invoking a pr
   );
 
   assert.equal(recorder.read().statusCode, 401);
-  assert.deepEqual(recorder.read().body, { error: 'Hosted AI access is not authorized.' });
+  assert.match(
+    String((recorder.read().body as { error: string }).error),
+    /does not match this deployment/
+  );
   assert.equal(loaded, false);
   assert.equal(fetched, false);
+});
+
+test('Vercel handler tells the user where to paste a missing hosted access token', async () => {
+  const handler = createVercelHandler(
+    async () => {
+      throw new Error('Server loader must not run.');
+    },
+    {
+      environment: {
+        CLAUDE_CLI_LAMBDA_URL: 'https://example.lambda-url.test/',
+        LAMBDA_PROXY_TOKEN: 'private-proxy-token',
+        HOSTED_AI_ACCESS_TOKEN: 'hosted-access-token',
+      },
+    }
+  );
+  const recorder = responseRecorder();
+
+  await handler(
+    {
+      method: 'POST',
+      query: { functionName: 'generate-test-cases' },
+      body: { aiSettings: { provider: 'claude_cli' } },
+    },
+    recorder.response
+  );
+
+  const error = String((recorder.read().body as { error: string }).error);
+  assert.equal(recorder.read().statusCode, 401);
+  assert.match(error, /missing/i);
+  assert.match(error, /AI Settings/);
+  assert.match(error, /HOSTED_AI_ACCESS_TOKEN/);
+});
+
+test('Vercel handler restores the real status from a heartbeat-started Lambda failure', async () => {
+  const handler = createVercelHandler(
+    async () => {
+      throw new Error('Server loader must not run.');
+    },
+    {
+      environment: {
+        CLAUDE_CLI_LAMBDA_URL: 'https://example.lambda-url.test/',
+        LAMBDA_PROXY_TOKEN: 'private-proxy-token',
+        HOSTED_AI_ACCESS_TOKEN: 'hosted-access-token',
+      },
+      // Heartbeat whitespace, HTTP 200 headers already committed, real status in the body.
+      fetchImpl: async () =>
+        new Response('   {"error":"Claude CLI timed out.","__upstreamStatus":504}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    }
+  );
+  const recorder = responseRecorder();
+
+  await handler(
+    {
+      method: 'POST',
+      query: { functionName: 'generate-test-cases' },
+      body: { aiSettings: { provider: 'claude_cli', hostedAccessToken: 'hosted-access-token' } },
+    },
+    recorder.response
+  );
+
+  assert.equal(recorder.read().statusCode, 504);
+  assert.deepEqual(recorder.read().body, { error: 'Claude CLI timed out.' });
+});
+
+test('Vercel handler passes successful heartbeat-started payloads through untouched', async () => {
+  const handler = createVercelHandler(
+    async () => {
+      throw new Error('Server loader must not run.');
+    },
+    {
+      environment: {
+        CLAUDE_CLI_LAMBDA_URL: 'https://example.lambda-url.test/',
+        LAMBDA_PROXY_TOKEN: 'private-proxy-token',
+        HOSTED_AI_ACCESS_TOKEN: 'hosted-access-token',
+      },
+      fetchImpl: async () =>
+        new Response('  {"testCases":[{"id":"TC_001"}]}', {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    }
+  );
+  const recorder = responseRecorder();
+
+  await handler(
+    {
+      method: 'POST',
+      query: { functionName: 'generate-test-cases' },
+      body: { aiSettings: { provider: 'claude_cli', hostedAccessToken: 'hosted-access-token' } },
+    },
+    recorder.response
+  );
+
+  assert.equal(recorder.read().statusCode, 200);
+  assert.deepEqual(recorder.read().body, { testCases: [{ id: 'TC_001' }] });
 });
 
 test('Vercel handler requires hosted access configuration for Claude Subscription', async () => {

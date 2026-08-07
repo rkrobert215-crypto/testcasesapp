@@ -16,6 +16,11 @@ const KNOWN_AI_FUNCTIONS = new Set([
 const MAX_REQUEST_BYTES = 5_500_000;
 const MAX_RESPONSE_BYTES = 5_500_000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
+// Streaming commits `200` headers as soon as the provider starts so intermediate
+// proxies do not drop an idle connection. A failure discovered after that point can
+// no longer change the status line, so it travels in the body instead. Every proxy in
+// front of this Lambda must strip this field and use it as the real status.
+export const STREAM_STATUS_FIELD = '__upstreamStatus';
 const API_KEY_FIELDS = [
   'hostedAccessToken',
   'openaiApiKey',
@@ -61,9 +66,8 @@ export function createLambdaHandler({
       });
     }
 
-    await prepareClaudeHome(environment);
-
     try {
+      await prepareClaudeHome(environment);
       const server = await loadServer();
       onProviderStart();
       const result = await server.handleHostedFunctionRequest(functionName, stripBrowserSecrets(body));
@@ -122,24 +126,53 @@ export function createStreamingLambdaHandler({
       ...handlerOptions,
       onProviderStart: startResponse,
     });
-    const response = await bufferedHandler(event);
 
-    if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
+    let response;
+    try {
+      response = await bufferedHandler(event);
+    } catch (error) {
+      console.error('[lambda-ai] streaming request failed:', safeErrorMessage(error));
+      response = jsonResponse(500, { error: 'The AI service could not complete the request.' });
+    } finally {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+      }
     }
-    if (!responseStarted) {
+
+    if (responseStarted) {
+      // Headers are already on the wire; smuggle the real status through the body.
+      outputStream.write(encodeStartedResponseBody(response));
+    } else {
       outputStream = lambdaRuntime.HttpResponseStream.from(responseStream, {
         statusCode: response.statusCode,
         headers: response.headers,
       });
+      outputStream.write(response.body);
     }
 
-    outputStream.write(response.body);
     outputStream.end();
     if (typeof outputStream.finished === 'function') {
       await outputStream.finished();
     }
   });
+}
+
+function encodeStartedResponseBody(response) {
+  if (response.statusCode === 200) {
+    return response.body;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(response.body);
+  } catch {
+    payload = null;
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    payload = { error: 'The AI service could not complete the request.' };
+  }
+
+  return JSON.stringify({ ...payload, [STREAM_STATUS_FIELD]: response.statusCode });
 }
 
 export const handler = createStreamingLambdaHandler();

@@ -51,6 +51,14 @@ export function describeAiError(
     };
   }
 
+  if (lower.includes('hosted ai access')) {
+    return {
+      title: 'Hosted AI access token required',
+      description: message,
+      retryable: false,
+    };
+  }
+
   if (
     lower.includes('api key is not configured') ||
     lower.includes('invalid api key') ||

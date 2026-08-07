@@ -73,6 +73,17 @@ export function AiSettingsDialog({ settings, migrationNotices = [], isReady, onS
     [draft.openrouterModel]
   );
 
+  // Hosted deployments gate every AI call on this token; localhost ignores it. Warn here
+  // instead of letting the generation fail later with a 401 from the hosted route.
+  const isHostedDeployment = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+    const { hostname } = window.location;
+    return hostname !== 'localhost' && hostname !== '127.0.0.1' && hostname !== '::1';
+  }, []);
+  const isMissingHostedAccessToken = isHostedDeployment && !draft.hostedAccessToken.trim();
+
   const handleSave = () => {
     onSave(draft);
     setOpen(false);
@@ -224,6 +235,15 @@ Default is on. Rob keeps this enabled. Output stays anchored to exact requiremen
                 placeholder="Enter the private token configured on Vercel"
                 description="Required by hosted Claude Subscription and recommended for every public Vercel AI route. It must match HOSTED_AI_ACCESS_TOKEN. This is an app access credential, not an Anthropic or provider API key; localhost ignores it."
               />
+
+              {isMissingHostedAccessToken && (
+                <p className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-xs text-foreground">
+                  This deployment is hosted, so generation will fail with{' '}
+                  <span className="font-medium">&ldquo;Hosted AI access token is missing&rdquo;</span> until you paste
+                  the <span className="font-mono">HOSTED_AI_ACCESS_TOKEN</span> value from your Vercel project
+                  environment variables above and save.
+                </p>
+              )}
 
               {draft.provider === 'claude_cli' && (
                 <div className="space-y-4 rounded-xl border border-primary/30 bg-primary/5 p-4">

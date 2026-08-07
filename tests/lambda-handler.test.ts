@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createLambdaHandler, createStreamingLambdaHandler } from '../cloud/aws/lambda-handler.mjs';
+import {
+  createLambdaHandler,
+  createStreamingLambdaHandler,
+  STREAM_STATUS_FIELD,
+} from '../cloud/aws/lambda-handler.mjs';
 
 function event(overrides: Record<string, unknown> = {}) {
   return {
@@ -158,4 +162,73 @@ test('Lambda streaming preserves fast validation status without starting heartbe
 
   assert.equal(statusCode, 404);
   assert.equal(chunks[0], '{"error":"Not found."}');
+});
+
+test('Lambda streaming smuggles the real status when the provider fails after heartbeats start', async () => {
+  const chunks: string[] = [];
+  let metadata: { statusCode: number } | null = null;
+  const responseStream = {
+    write: (chunk: string) => chunks.push(chunk),
+    end: () => undefined,
+    finished: async () => undefined,
+  };
+  const lambdaRuntime = {
+    streamifyResponse: (implementation: unknown) => implementation,
+    HttpResponseStream: {
+      from: (stream: typeof responseStream, nextMetadata: typeof metadata) => {
+        metadata = nextMetadata;
+        return stream;
+      },
+    },
+  };
+  const handler = createStreamingLambdaHandler({
+    lambdaRuntime,
+    heartbeatIntervalMs: 60_000,
+    environment: { LAMBDA_PROXY_TOKEN: 'proxy-secret' },
+    loadServer: async () => ({
+      handleHostedFunctionRequest: async () => {
+        throw new Error('Claude CLI timed out after 250000ms');
+      },
+      toProviderFailure: () => null,
+    }),
+  }) as (event: unknown, responseStream: typeof responseStream) => Promise<void>;
+
+  await handler(event(), responseStream);
+
+  // Headers were already committed as 200, so the status has to ride in the body.
+  assert.equal(metadata?.statusCode, 200);
+  assert.equal(chunks[0], ' ');
+  assert.deepEqual(JSON.parse(chunks.join('')), {
+    error: 'Claude CLI timed out after 250000ms',
+    [STREAM_STATUS_FIELD]: 500,
+  });
+});
+
+test('Lambda streaming does not smuggle a status into successful payloads', async () => {
+  const chunks: string[] = [];
+  const responseStream = {
+    write: (chunk: string) => chunks.push(chunk),
+    end: () => undefined,
+    finished: async () => undefined,
+  };
+  const lambdaRuntime = {
+    streamifyResponse: (implementation: unknown) => implementation,
+    HttpResponseStream: {
+      from: (stream: typeof responseStream) => stream,
+    },
+  };
+  const handler = createStreamingLambdaHandler({
+    lambdaRuntime,
+    heartbeatIntervalMs: 60_000,
+    environment: { LAMBDA_PROXY_TOKEN: 'proxy-secret' },
+    loadServer: async () => ({
+      handleHostedFunctionRequest: async () => ({ testCases: [{ id: 'TC-001' }] }),
+      toProviderFailure: () => null,
+    }),
+  }) as (event: unknown, responseStream: typeof responseStream) => Promise<void>;
+
+  await handler(event(), responseStream);
+
+  const payload = JSON.parse(chunks.join('')) as Record<string, unknown>;
+  assert.equal(payload[STREAM_STATUS_FIELD], undefined);
 });

@@ -190,15 +190,46 @@ function getDirectFunctionHeaders(functionName: string) {
   return headers;
 }
 
-async function parseFunctionError(response: Response) {
+// The streaming Lambda commits `200` headers before the provider outcome is known, so a
+// late failure arrives as a 200 carrying its real status in the body. The Vercel route
+// unwraps this server-side, but the Cloudflare worker streams the body through untouched,
+// so the browser has to understand it too. Contract: cloud/aws/lambda-handler.mjs.
+const STREAM_STATUS_FIELD = '__upstreamStatus';
+
+function unwrapStreamStatus(payload: unknown, fallbackStatus: number) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { status: fallbackStatus, payload };
+  }
+
+  const { [STREAM_STATUS_FIELD]: smuggledStatus, ...rest } = payload as Record<string, unknown>;
+  if (typeof smuggledStatus !== 'number' || !Number.isInteger(smuggledStatus)) {
+    return { status: fallbackStatus, payload };
+  }
+  if (smuggledStatus < 400 || smuggledStatus > 599) {
+    return { status: fallbackStatus, payload: rest };
+  }
+
+  return { status: smuggledStatus, payload: rest };
+}
+
+async function readFunctionResponse(response: Response) {
   const contentType = response.headers.get('content-type') || '';
-  const payload = contentType.includes('application/json')
+  const raw = contentType.includes('application/json')
     ? await response.json()
     : await response.text();
 
+  return unwrapStreamStatus(raw, response.status);
+}
+
+function readErrorMessage(payload: unknown, status: number) {
   return typeof payload === 'object' && payload && 'error' in payload
     ? String((payload as { error?: unknown }).error)
-    : `Function request failed with status ${response.status}`;
+    : `Function request failed with status ${status}`;
+}
+
+async function parseFunctionError(response: Response) {
+  const { status, payload } = await readFunctionResponse(response);
+  return readErrorMessage(payload, status);
 }
 
 async function invokeViaDirectFetch(
@@ -217,19 +248,11 @@ async function invokeViaDirectFetch(
     body: JSON.stringify(body),
   });
 
-  const contentType = response.headers.get('content-type') || '';
-  const data = contentType.includes('application/json')
-    ? await response.json()
-    : await response.text();
+  const { status, payload: data } = await readFunctionResponse(response);
 
-  if (!response.ok) {
-    const errorMessage =
-      typeof data === 'object' && data && 'error' in data
-        ? String((data as { error?: unknown }).error)
-        : `Function request failed with status ${response.status}`;
-
-    const functionError = new Error(errorMessage) as Error & { status?: number };
-    functionError.status = response.status;
+  if (status >= 400) {
+    const functionError = new Error(readErrorMessage(data, status)) as Error & { status?: number };
+    functionError.status = status;
     return {
       data: null,
       error: functionError,
@@ -336,13 +359,17 @@ export async function invokeWithStageStream(
       body: JSON.stringify(requestBody),
     });
 
-    if (!response.ok) {
-      throw new Error(await parseFunctionError(response));
-    }
-
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('text/event-stream')) {
-      return contentType.includes('application/json') ? await response.json() : await response.text();
+      const { status, payload } = await readFunctionResponse(response);
+      if (status >= 400) {
+        throw new Error(readErrorMessage(payload, status));
+      }
+      return payload;
+    }
+
+    if (!response.ok) {
+      throw new Error(await parseFunctionError(response));
     }
 
     return await readEventStream(response, (event) => {

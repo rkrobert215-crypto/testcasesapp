@@ -200,9 +200,16 @@ function authorizeHostedAiRequest(
   const suppliedToken =
     typeof settings.hostedAccessToken === 'string' ? settings.hostedAccessToken.trim() : '';
 
-  return constantTimeEqual(suppliedToken, configuredToken)
-    ? null
-    : { status: 401, error: 'Hosted AI access is not authorized.' };
+  if (constantTimeEqual(suppliedToken, configuredToken)) {
+    return null;
+  }
+
+  return {
+    status: 401,
+    error: suppliedToken
+      ? 'Hosted AI access token does not match this deployment. Open AI Settings and re-paste the exact HOSTED_AI_ACCESS_TOKEN value configured on Vercel.'
+      : 'Hosted AI access token is missing. Open AI Settings, paste the HOSTED_AI_ACCESS_TOKEN value configured on Vercel into "Hosted AI access token", and save.',
+  };
 }
 
 function constantTimeEqual(left: string, right: string) {
@@ -251,9 +258,9 @@ async function proxyClaudeCliRequest(
     return;
   }
 
-  const payload = await readUpstreamPayload(upstreamResponse);
-  if (upstreamResponse.ok) {
-    res.status(upstreamResponse.status).json(payload);
+  const { status, payload } = await readUpstreamPayload(upstreamResponse);
+  if (status >= 200 && status < 300) {
+    res.status(status).json(payload);
     return;
   }
 
@@ -264,20 +271,47 @@ async function proxyClaudeCliRequest(
     typeof (payload as Record<string, unknown>).error === 'string'
       ? String((payload as Record<string, unknown>).error).slice(0, 800)
       : 'The Claude Subscription service could not complete the request.';
-  res.status(upstreamResponse.status).json({ error: errorText });
+  res.status(status).json({ error: errorText });
 }
 
-async function readUpstreamPayload(response: Response): Promise<unknown> {
+async function readUpstreamPayload(
+  response: Response
+): Promise<{ status: number; payload: unknown }> {
   const text = await response.text();
-  if (!text) {
-    return {};
+  if (!text.trim()) {
+    return { status: response.status, payload: {} };
   }
 
+  let parsed: unknown;
   try {
-    return JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch {
-    return response.ok
-      ? { error: 'The Claude Subscription service returned an invalid response.' }
-      : {};
+    return {
+      status: response.ok ? 502 : response.status,
+      payload: response.ok
+        ? { error: 'The Claude Subscription service returned an invalid response.' }
+        : {},
+    };
   }
+
+  return unwrapStreamStatus(parsed, response.status);
+}
+
+// The streaming Lambda commits `200` headers before it knows the outcome, so a late
+// failure arrives as a 200 carrying the true status in the body. Contract is defined in
+// cloud/aws/lambda-handler.mjs (STREAM_STATUS_FIELD).
+function unwrapStreamStatus(payload: unknown, fallbackStatus: number) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { status: fallbackStatus, payload };
+  }
+
+  const { __upstreamStatus: smuggledStatus, ...rest } = payload as Record<string, unknown>;
+  if (typeof smuggledStatus !== 'number' || !Number.isInteger(smuggledStatus)) {
+    return { status: fallbackStatus, payload };
+  }
+  if (smuggledStatus < 400 || smuggledStatus > 599) {
+    return { status: fallbackStatus, payload: rest };
+  }
+
+  return { status: smuggledStatus, payload: rest };
 }
