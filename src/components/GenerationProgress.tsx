@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Search, CheckCircle2, FileText } from 'lucide-react';
+import { Search, CheckCircle2, FileText, ShieldCheck } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import { cn } from '@/lib/utils';
 import { GenerationStage } from '@/hooks/useTestCaseGenerator';
@@ -14,6 +14,7 @@ interface GenerationProgressProps {
 const STEPS = [
   { icon: FileText, label: 'Reading requirement', stage: 'reading' },
   { icon: Search, label: 'Generating test cases', stage: 'generating' },
+  { icon: ShieldCheck, label: 'Checking coverage', stage: 'validating' },
   { icon: CheckCircle2, label: 'Finalizing output', stage: 'finalizing' },
 ];
 
@@ -32,10 +33,10 @@ const STAGE_INDEX: Record<Exclude<GenerationStage, null>, number> = {
   reading: 0,
   analyzing: 1,
   generating: 1,
-  validating: 1,
-  retrying: 1,
-  finalizing: 2,
-  complete: 2,
+  validating: 2,
+  retrying: 2,
+  finalizing: 3,
+  complete: 3,
   error: 0,
 };
 

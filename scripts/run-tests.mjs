@@ -18,6 +18,8 @@ const testEntries = [
   'tests/wrangler-output.test.ts',
   'tests/image-payload-budget.test.ts',
   'tests/test-case-identity.test.ts',
+  'tests/technical-workflow-coverage.test.ts',
+  'tests/coverage-quality-gate.test.ts',
 ].map((fileName) => path.join(projectRoot, fileName));
 
 await rm(outputDirectory, { recursive: true, force: true });

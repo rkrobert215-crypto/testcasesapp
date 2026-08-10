@@ -116,6 +116,7 @@ export function TestCaseInput({ onGenerate, isLoading, stage, stageMessage, onCl
   };
 
   const hasContent = input.trim() || imagesBase64.length > 0;
+  const usesAutomaticQualityGate = inputType === 'requirement';
 
   return (
     <div className="relative group">
@@ -214,7 +215,7 @@ export function TestCaseInput({ onGenerate, isLoading, stage, stageMessage, onCl
             ) : (
               <>
                 <Zap className="h-5 w-5" />
-                <span>Generate Test Cases</span>
+                <span>{usesAutomaticQualityGate ? 'Generate + Auto QA Check' : 'Generate Test Cases'}</span>
               </>
             )}
           </Button>
@@ -222,12 +223,20 @@ export function TestCaseInput({ onGenerate, isLoading, stage, stageMessage, onCl
             variant="outline" 
             size="lg"
             onClick={handleClear} 
+            disabled={isLoading || isProcessingImages}
             className="gap-2 border-border/60 hover:bg-muted/50 h-12 rounded-xl px-5"
           >
             <Trash2 className="h-4 w-4" />
             <span className="hidden sm:inline">Clear</span>
           </Button>
         </div>
+
+        {usesAutomaticQualityGate && (
+          <p className="text-center text-xs leading-5 text-muted-foreground">
+            Full Requirement runs coverage automatically, converts missing scenarios and testable recommendations,
+            removes duplicates, and delivers only the final reviewed suite.
+          </p>
+        )}
 
         <GenerationProgress
           isActive={isLoading}

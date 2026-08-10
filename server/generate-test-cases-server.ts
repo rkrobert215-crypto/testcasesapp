@@ -27,6 +27,7 @@ import {
   getGenerationModeProfile,
   type GenerationMode,
 } from '../supabase/functions/_shared/generationMode.ts';
+import { buildTechnicalWorkflowCoverageChecklist } from '../supabase/functions/_shared/technicalWorkflowCoverage.ts';
 import { formatRequirementInsights } from '../supabase/functions/_shared/qaPlanningContext.ts';
 import {
   clarificationQuestionsSchema,
@@ -44,7 +45,9 @@ const PORT = Number(process.env.LOCAL_AI_SERVER_PORT || 8787);
 const MAX_BODY_BYTES = 20 * 1024 * 1024;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_SIZE = 50;
-const PROMPT_VERSION = 'qa-pro-node-v1';
+const PROMPT_VERSION = 'qa-pro-node-v2';
+const AUDIT_CACHE_VERSION = 'audit-test-cases-2026-08-10-v2';
+const COVERAGE_CACHE_VERSION = 'validate-coverage-2026-08-10-v2';
 const GENERATION_TIME_BUDGET_MS = 20 * 60 * 1000;
 const RETRY_STAGE_RESERVE_MS = 3 * 60 * 1000;
 const FINALIZATION_RESERVE_MS = 60_000;
@@ -1065,8 +1068,9 @@ async function handleAuditTestCases(body: Record<string, unknown>) {
   const aiSettings = body.aiSettings;
   const generationMode = getGenerationMode(aiSettings);
   const generationProfile = getGenerationModeProfile(generationMode);
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(requirement);
   const cacheKey = images.length === 0
-    ? await computeRequestCacheKey('audit-test-cases', aiSettings, {
+    ? await computeRequestCacheKey(AUDIT_CACHE_VERSION, aiSettings, {
         requirement,
         existingTestCases,
         focusMissingScenarios: requestedCoverageGaps,
@@ -1103,6 +1107,8 @@ STRICT RULES:
 - Do not invent features that are not in the requirement.
 - Convert focused coverage recommendations into executable testcase rows only when they describe verifiable behavior or a real coverage need.
 - Never turn process-only, documentation-only, or clarification advice into fabricated product behavior.
+- For event-driven persistence workflows, treat replay/concurrency idempotency, existing-state/timestamp preservation, uniqueness enforcement, tenant isolation, malformed data, non-interference, failure/retry, batch behavior, and downstream lifecycle as separate risks when supported by the requirement.
+- Every focused missing scenario and every testable recommendation must map to at least one returned testcase unless it is already covered by the existing suite.
 
 GENERATION STYLE MODE: ${generationProfile.label}
 ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
@@ -1138,6 +1144,13 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
         ``,
         `Style guidance:`,
         ...generationProfile.auditPromptLines.map((line) => `- ${line}`),
+        ...(technicalWorkflowChecklist.length > 0
+          ? [
+              ``,
+              `Technical workflow coverage checklist:`,
+              ...technicalWorkflowChecklist.map((line, index) => `${index + 1}. ${line}`),
+            ]
+          : []),
         ``,
         ...(requestedCoverageGaps.length > 0
           ? [
@@ -1184,6 +1197,9 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
         : []),
       ...(requestedCoverageRecommendations.length > 0
         ? ['Check whether every testable recommendation is converted into concrete steps and observable expected results without fabricating unspecified behavior.']
+        : []),
+      ...(technicalWorkflowChecklist.length > 0
+        ? ['Check whether the enhancement set closes the applicable replay/concurrency, preservation, uniqueness, tenant-isolation, malformed-data, non-interference, failure/retry, batch, and downstream-lifecycle gaps.']
         : []),
     ],
     correctionReminder:
@@ -1308,8 +1324,9 @@ async function handleValidateCoverage(body: Record<string, unknown>) {
 
   const generationMode = getGenerationMode(aiSettings);
   const generationProfile = getGenerationModeProfile(generationMode);
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(input);
   const cacheKey = images.length === 0
-    ? await computeRequestCacheKey('validate-coverage', aiSettings, { input, inputType, testCases })
+    ? await computeRequestCacheKey(COVERAGE_CACHE_VERSION, aiSettings, { input, inputType, testCases })
     : null;
 
   if (cacheKey) {
@@ -1335,8 +1352,8 @@ GENERATION STYLE MODE: ${generationProfile.label}
 REQUIREMENT/INPUT:
 ${input || 'No text input provided'}
 
-GENERATED TEST CASES (${testCases.length} total):
-${(testCases as Array<{ type?: string; testCase?: string }>).map((testCase, index: number) => `${index + 1}. [${testCase.type ?? 'Unknown'}] ${testCase.testCase ?? 'Untitled test case'}`).join('\n')}
+GENERATED TEST CASES (${testCases.length} total, complete rows):
+${JSON.stringify(testCases, null, 2)}
 `;
 
   if (images.length > 0) {
@@ -1344,6 +1361,9 @@ ${(testCases as Array<{ type?: string; testCase?: string }>).map((testCase, inde
   }
 
   validationPrompt += `\n\nStyle guidance:\n${generationProfile.coveragePromptLines.map((line) => `- ${line}`).join('\n')}`;
+  if (technicalWorkflowChecklist.length > 0) {
+    validationPrompt += `\n\nTechnical workflow coverage checklist:\n${technicalWorkflowChecklist.map((line, index) => `${index + 1}. ${line}`).join('\n')}`;
+  }
   userParts.push({ type: 'text', text: validationPrompt });
   for (const image of images) {
     userParts.push({ type: 'image', dataUrl: image });
@@ -1362,6 +1382,13 @@ ${(testCases as Array<{ type?: string; testCase?: string }>).map((testCase, inde
     systemPrompt: `You are a senior QA engineer validating test coverage. Analyze the requirement and test cases to identify gaps.
 
 Be thorough but practical. Focus on ACTUAL missing scenarios, not minor variations.
+
+AUDIT RULES:
+- Read complete testcase rows, including requirement reference, scenario, steps, expected result, test data, and post-condition. A title alone is not proof of coverage.
+- Put every missing executable behavior in missingScenarios; do not hide executable gaps only inside recommendations.
+- Phrase testable recommendations as concrete coverage needs that can be converted into full testcase rows.
+- Prefix non-testable ambiguity with "Clarification:" and process-only advice with "Process:" so it is not fabricated into product behavior.
+- For technical workflows, audit replay/concurrency idempotency, preservation of existing states/timestamps, uniqueness enforcement, tenant isolation, NULL/malformed data, non-interference, failure/retry, batch behavior, and downstream lifecycle when supported.
 
 GENERATION STYLE MODE: ${generationProfile.label}
 ${generationProfile.coveragePromptLines.map((line) => `- ${line}`).join('\n')}`,
@@ -1403,6 +1430,10 @@ ${generationProfile.coveragePromptLines.map((line) => `- ${line}`).join('\n')}`,
       'Check whether covered areas, missing scenarios, and recommendations are requirement-driven and not generic filler.',
       'Check whether high-risk and high-priority missing scenarios are surfaced clearly.',
       'Check whether the report would be useful to a senior QA reviewer making next-step decisions.',
+      'Check whether every executable gap is represented in missingScenarios or a clearly testable recommendation, while clarifications and process advice stay explicitly classified.',
+      ...(technicalWorkflowChecklist.length > 0
+        ? ['Check the technical workflow risk family line by line, especially idempotency replay/concurrency, state preservation, uniqueness, tenant isolation, malformed data, non-interference, failure/retry, batch behavior, and downstream status lifecycle.']
+        : []),
     ],
     correctionReminder:
       'Tighten the coverage judgment so the report is honest, risk-aware, and useful for real QA decision-making.',

@@ -9,8 +9,9 @@ const TABS_GUIDE = [
       { text: 'Select an input mode (Full Requirement, High Level TCs, Complete TC, Scenario, or Expected Result)', icon: <ArrowRight className="h-3.5 w-3.5" /> },
       { text: 'Paste your requirement / user story in the text area', icon: <ArrowRight className="h-3.5 w-3.5" /> },
       { text: 'Optionally attach up to 5 screenshots or mockups for visual context', icon: <ImagePlus className="h-3.5 w-3.5" /> },
-      { text: 'Click "Generate Test Cases" — AI produces 20-30 structured test cases', icon: <Brain className="h-3.5 w-3.5" /> },
-      { text: 'Use "Validate Coverage" to check if all scenarios are covered', icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
+      { text: 'For Full Requirement, click "Generate + Auto QA Check" to create the initial structured suite', icon: <Brain className="h-3.5 w-3.5" /> },
+      { text: 'The app automatically checks coverage, converts missing scenarios and testable recommendations into complete cases, deduplicates them, and then delivers the final suite', icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
+      { text: 'Use "Check Coverage" afterward whenever you edit, delete, merge, audit, or restore test cases', icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
     ],
     whatToTest: [
       'Try each of the 5 input modes with different types of requirements',
@@ -94,7 +95,7 @@ const TABS_GUIDE = [
 const GENERAL_FEATURES = [
   { icon: <ClipboardCopy className="h-4 w-4" />, text: 'Click any cell to copy its value; use row/column copy buttons for bulk copying' },
   { icon: <Download className="h-4 w-4" />, text: 'Export to CSV or XLSX — files are spreadsheet-ready with auto-sized columns' },
-  { icon: <RotateCcw className="h-4 w-4" />, text: 'History panel (right sidebar) auto-saves every generation for quick reload' },
+  { icon: <RotateCcw className="h-4 w-4" />, text: 'History drawer auto-saves final generated suites for quick restore without narrowing the testcase table' },
   { icon: <Brain className="h-4 w-4" />, text: 'AI calls auto-retry up to 3 times with exponential backoff on failures' },
   { icon: <Database className="h-4 w-4" />, text: 'AI Settings style mode now applies across Generate, Requirement Analysis, QA Planning, Audit, Merge, and Coverage validation' },
   { icon: <GitBranch className="h-4 w-4" />, text: 'QA Planning groups Test Plan, RTM, Test Data, Scenario Map, and Clarification Questions into one workbench' },

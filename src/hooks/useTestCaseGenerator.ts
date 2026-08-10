@@ -6,13 +6,46 @@ import { describeAiError } from '@/lib/providerErrors';
 
 export type GenerationStage = 'reading' | 'analyzing' | 'generating' | 'validating' | 'retrying' | 'finalizing' | 'complete' | 'error' | null;
 
+interface GenerateTestCaseOptions {
+  deferDelivery?: boolean;
+}
+
+interface DeliverTestCaseOptions {
+  title: string;
+  description: string;
+  stageMessage?: string;
+  variant?: 'default' | 'destructive';
+}
+
 export function useTestCaseGenerator() {
   const [isLoading, setIsLoading] = useState(false);
   const [testCases, setTestCases] = useState<TestCase[]>([]);
   const [stage, setStage] = useState<GenerationStage>(null);
   const [stageMessage, setStageMessage] = useState<string | null>(null);
 
-  const generateTestCases = async (input: string, inputType: InputType, imagesBase64?: string[]) => {
+  const updateGenerationStage = (nextStage: GenerationStage, message: string) => {
+    setStage(nextStage);
+    setStageMessage(message);
+  };
+
+  const deliverTestCases = (cases: TestCase[], options: DeliverTestCaseOptions) => {
+    setTestCases(cases);
+    setStage('complete');
+    setStageMessage(options.stageMessage || 'Test cases ready.');
+    setIsLoading(false);
+    toast({
+      title: options.title,
+      description: options.description,
+      variant: options.variant,
+    });
+  };
+
+  const generateTestCases = async (
+    input: string,
+    inputType: InputType,
+    imagesBase64?: string[],
+    options: GenerateTestCaseOptions = {}
+  ) => {
     if (!input.trim() && (!imagesBase64 || imagesBase64.length === 0)) {
       toast({
         title: 'Input required',
@@ -26,6 +59,7 @@ export function useTestCaseGenerator() {
     setTestCases([]);
     setStage('reading');
     setStageMessage('Reading requirement...');
+    let keepLoadingForDeferredDelivery = false;
 
     try {
       setStage('generating');
@@ -40,16 +74,17 @@ export function useTestCaseGenerator() {
       const generated = data.testCases || [];
       const wasCached = data.cached === true;
 
-      setTestCases(generated);
-      setStage('finalizing');
-      setStageMessage('Finalizing output...');
-      setStage('complete');
-      setStageMessage(wasCached ? 'Loaded cached results.' : 'Test cases ready.');
-
-      toast({
-        title: wasCached ? 'Test cases loaded (cached)' : 'Test cases generated',
-        description: `${wasCached ? 'Loaded' : 'Generated'} ${generated.length} test cases${wasCached ? ' from cache' : ''}.`,
-      });
+      if (options.deferDelivery && generated.length > 0) {
+        keepLoadingForDeferredDelivery = true;
+        setStage('validating');
+        setStageMessage('Initial suite ready. Starting automatic coverage review...');
+      } else {
+        deliverTestCases(generated, {
+          title: wasCached ? 'Test cases loaded (cached)' : 'Test cases generated',
+          description: `${wasCached ? 'Loaded' : 'Generated'} ${generated.length} test cases${wasCached ? ' from cache' : ''}.`,
+          stageMessage: wasCached ? 'Loaded cached results.' : 'Test cases ready.',
+        });
+      }
 
       return generated;
     } catch (error) {
@@ -64,11 +99,14 @@ export function useTestCaseGenerator() {
       });
       return [];
     } finally {
-      setIsLoading(false);
+      if (!keepLoadingForDeferredDelivery) {
+        setIsLoading(false);
+      }
     }
   };
 
   const clearTestCases = () => {
+    setIsLoading(false);
     setTestCases([]);
     setStage(null);
     setStageMessage(null);
@@ -82,5 +120,7 @@ export function useTestCaseGenerator() {
     generateTestCases,
     clearTestCases,
     setTestCases,
+    updateGenerationStage,
+    deliverTestCases,
   };
 }

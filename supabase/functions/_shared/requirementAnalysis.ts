@@ -1,8 +1,9 @@
 import { generateReviewedStructuredData } from './reviewedStructuredGeneration.ts';
 import { getGenerationMode, getGenerationModeProfile, isStrictRequirementMode } from './generationMode.ts';
 import { computeRequestCacheKey, getCachedRequest, setCachedRequest } from './requestCache.ts';
+import { buildTechnicalWorkflowCoverageChecklist } from './technicalWorkflowCoverage.ts';
 
-const REQUIREMENT_ANALYSIS_CACHE_VERSION = '2026-04-08-v4';
+const REQUIREMENT_ANALYSIS_CACHE_VERSION = '2026-08-10-v5';
 
 export type RequirementPointSourceType = 'Explicit AC' | 'Derived Requirement Point';
 export type RequirementPointPriority = 'Critical' | 'High' | 'Medium' | 'Low';
@@ -124,6 +125,7 @@ YOUR JOB:
 - Identify whether behavior depends on tenant settings, configuration toggles, feature flags, permissions, role differences, redirects, or login/MFA state when that context is present.
 - Identify whether onboarding, account setup, customer/supplier/buyer/reseller actor differences, notifications/emails, exports/downloads, or API/network side effects are part of the requirement when that context is present.
 - Identify whether accessibility, responsive/mobile behavior, cross-browser support, concurrency, performance/volume expectations, or deeper API/DB verification are part of the requirement when that context is present.
+- When the requirement describes an event consumer, status transition, database/table write, idempotency, feature flag, or structured source data, decompose its direct technical risks: trigger matrix, replay/concurrent duplication, existing-state preservation, uniqueness enforcement, tenant isolation, malformed data, non-interference, failure/retry behavior, batch processing, and downstream lifecycle.
 - Preserve exact labels, config keys, rule terms, and fixed behavior names from the requirement when they matter.
 - Tell the tester WHAT to test.
 - Tell the tester HOW to test it.
@@ -157,6 +159,7 @@ export async function analyzeRequirementText(
   const profile = getGenerationModeProfile(generationMode);
   const strictRequirementMode = isStrictRequirementMode(aiSettings);
   const trimmedRequirement = String(requirement).trim();
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(trimmedRequirement);
   const cacheKey = await computeRequestCacheKey('shared-requirement-analysis', aiSettings, {
     version: REQUIREMENT_ANALYSIS_CACHE_VERSION,
     requirement: trimmedRequirement,
@@ -191,6 +194,13 @@ export async function analyzeRequirementText(
           '',
           `Requirement to analyze:`,
           trimmedRequirement,
+          ...(technicalWorkflowChecklist.length > 0
+            ? [
+                '',
+                'Technical workflow risks to classify as explicit points, direct implications, recommendations, or clarifications:',
+                ...technicalWorkflowChecklist.map((line, index) => `${index + 1}. ${line}`),
+              ]
+            : []),
         ].join('\n'),
       },
     ],
@@ -208,6 +218,11 @@ export async function analyzeRequirementText(
       'Check whether tenant-setting, permission, role, redirect, or MFA/login dependencies were captured when the requirement clearly supports them.',
       'Check whether onboarding, account setup, export/download, notification/email, API/network side effects, and buyer/customer/supplier/reseller actor differences were captured when the requirement clearly supports them.',
       'Check whether accessibility, responsive/mobile, cross-browser, concurrency, performance/volume, and deeper API/DB verification obligations were captured when the requirement clearly supports them.',
+      ...(technicalWorkflowChecklist.length > 0
+        ? [
+            'Check whether event replay/concurrency, existing-record preservation, uniqueness enforcement, tenant isolation, malformed source data, non-interference, failure/retry, batch, and downstream lifecycle risks were classified completely without inventing unspecified constants or policies.',
+          ]
+        : []),
       ...(strictRequirementMode
         ? [
             'Check whether exact labels, config keys, and fixed logic terms were preserved instead of replaced by generic examples.',

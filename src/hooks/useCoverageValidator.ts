@@ -18,6 +18,10 @@ export interface CoverageResult {
   recommendations: string[];
 }
 
+interface CoverageValidationOptions {
+  silent?: boolean;
+}
+
 export function useCoverageValidator() {
   const [isValidating, setIsValidating] = useState(false);
   const [coverageResult, setCoverageResult] = useState<CoverageResult | null>(null);
@@ -26,7 +30,8 @@ export function useCoverageValidator() {
     input: string,
     inputType: InputType,
     testCases: TestCase[],
-    imagesBase64?: string[]
+    imagesBase64?: string[],
+    options: CoverageValidationOptions = {}
   ) => {
     if (testCases.length === 0) {
       toast({
@@ -45,21 +50,25 @@ export function useCoverageValidator() {
 
       setCoverageResult(data);
 
-      const scoreLabel = data.coverageScore >= 90 ? 'Excellent' : data.coverageScore >= 70 ? 'Good' : 'Needs Review';
-      toast({
-        title: `Coverage: ${data.coverageScore}% - ${scoreLabel}`,
-        description: data.summary,
-      });
+      if (!options.silent) {
+        const scoreLabel = data.coverageScore >= 90 ? 'Excellent' : data.coverageScore >= 70 ? 'Good' : 'Needs Review';
+        toast({
+          title: `Coverage: ${data.coverageScore}% - ${scoreLabel}`,
+          description: data.summary,
+        });
+      }
 
       return data;
     } catch (error) {
       console.error('Error validating coverage:', error);
       const aiError = describeAiError(error, 'Validation failed', 'Failed to validate coverage');
-      toast({
-        title: aiError.title,
-        description: aiError.description,
-        variant: 'destructive',
-      });
+      if (!options.silent) {
+        toast({
+          title: aiError.title,
+          description: aiError.description,
+          variant: 'destructive',
+        });
+      }
       return null;
     } finally {
       setIsValidating(false);

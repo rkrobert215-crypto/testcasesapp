@@ -23,6 +23,11 @@ import {
   isStrictRequirementMode,
   type GenerationMode,
 } from './generationMode.ts';
+import {
+  buildTechnicalWorkflowCoverageChecklist,
+  detectTechnicalWorkflowSignals,
+  findMissingTechnicalWorkflowCoverage,
+} from './technicalWorkflowCoverage.ts';
 
 export type InputType = 'requirement' | 'highlevel' | 'testcase' | 'scenario' | 'expected';
 export type UserPromptPart =
@@ -48,7 +53,7 @@ interface GeneratePipelineResult {
   cached?: boolean;
 }
 
-const GENERATE_CACHE_VERSION = 'generate-test-cases-2026-05-24-v9';
+const GENERATE_CACHE_VERSION = 'generate-test-cases-2026-08-10-v10';
 
 const INPUT_TYPE_PROMPTS: Record<InputType, string> = {
   requirement: `You are a senior QA engineer with 15+ years of manual testing experience.
@@ -146,6 +151,7 @@ function buildSystemPrompt(
       '- Every testcase must map to explicit requirement wording, an acceptance-criteria point, a stated permission or role, a stated UI action/state, a stated validation or blocked path, or a directly stated user-visible side effect.',
       '- Cover positive, negative, functional, UI, permission, and edge cases only where those categories are supported by the requirement.',
       '- Do not add browser, responsive, performance, concurrency, accessibility, security, API/DB, or configuration-admin scenarios unless the requirement explicitly names that obligation.',
+      '- Event replay, concurrent duplicate delivery, persistence constraints, tenant isolation, malformed source data, and failure handling are allowed when they are direct verification obligations of stated idempotency, SQL/database writes, event consumers, feature flags, or structured-data rules.',
       '- If the requirement limits an action to eligible departments, locations, groups, devices, statuses, roles, or permissions, test those constraints exactly and do not generalize them.',
       '- Preserve exact labels, authority names, config keys, rule names, popup names, and fixed logic terms throughout the suite.'
     );
@@ -735,6 +741,9 @@ function estimateMinimumTestCases(
     if (isConfigDrivenFilterRequirement(input, insights)) {
       baseline = Math.max(baseline, Math.min(40, 10 + explicitPointCount * 2));
     }
+    if (detectTechnicalWorkflowSignals(input).detected) {
+      baseline = Math.max(baseline, input.length > 1600 ? 34 : 28);
+    }
 
     return baseline;
   }
@@ -921,16 +930,23 @@ export function validateGeneratedCases(
     }
   }
 
+  const missingTechnicalCoverage = findMissingTechnicalWorkflowCoverage(input, combinedText);
+  if (missingTechnicalCoverage.length > 0) {
+    violations.push(
+      `Technical workflow coverage is incomplete: ${missingTechnicalCoverage.join(', ')}.`
+    );
+  }
+
   return { valid: violations.length === 0, violations };
 }
 
 const STRICT_UNSUPPORTED_TOPICS = [
   { label: 'cross-browser compatibility', generated: ['cross-browser', 'browser compatibility'], required: ['cross-browser', 'browser compatibility'] },
   { label: 'responsive/mobile coverage', generated: ['responsive', 'mobile layout', 'tablet', 'touch behavior'], required: ['responsive', 'mobile', 'tablet', 'touch'] },
-  { label: 'performance/load coverage', generated: ['performance', 'load time', 'large-data', 'large data', 'slow response'], required: ['performance', 'load time', 'large data', 'slow response'] },
-  { label: 'concurrency coverage', generated: ['concurrency', 'multi-user', 'stale data', 'duplicate submit'], required: ['concurrency', 'multi-user', 'stale data', 'duplicate submit'] },
+  { label: 'performance/load coverage', generated: ['performance', 'load time', 'large-data', 'large data', 'slow response'], required: ['performance', 'load time', 'large data', 'slow response', 'batch', 'consumer', 'lambda', 'bulk', 'upserts'] },
+  { label: 'concurrency coverage', generated: ['concurrency', 'concurrent', 'parallel', 'multi-user', 'stale data', 'duplicate submit'], required: ['concurrency', 'concurrent', 'parallel', 'multi-user', 'stale data', 'duplicate submit', 'idempotent', 'on duplicate key', 'duplicate key', 'replay', 're-process', 'reprocess', 'unique constraint', 'unique index'] },
   { label: 'accessibility coverage', generated: ['accessibility', 'aria', 'screen reader', 'keyboard navigation', 'focus order'], required: ['accessibility', 'aria', 'screen reader', 'keyboard', 'focus'] },
-  { label: 'API/DB verification', generated: ['api response', 'api payload', 'database', 'db verification', 'rollback'], required: ['api response', 'api payload', 'database', 'db verification', 'rollback'] },
+  { label: 'API/DB verification', generated: ['api response', 'api payload', 'database', 'db verification', 'rollback', 'unique constraint', 'unique index'], required: ['api response', 'api payload', 'database', 'db verification', 'rollback', 'insert into', 'on duplicate key', 'table', 'row', 'column', 'constraint', 'index', 'created_date', 'createddate'] },
   { label: 'generic CRUD boundary coverage', generated: ['breadcrumb', 'tab order', 'special character', 'max length', 'maximum length', 'over-limit', 'leading/trailing spaces'], required: ['breadcrumb', 'tab order', 'special character', 'max length', 'maximum length', 'over-limit', 'leading/trailing spaces'] },
   {
     label: 'unstated list capabilities',
@@ -1020,6 +1036,7 @@ function buildInstructionText(
   const multiActorCoverageChecklist = buildMultiActorCoverageChecklist(input, insights);
   const requirementFidelityChecklist = buildRequirementFidelityChecklist(input, strictRequirementMode);
   const configDrivenFilterChecklist = buildConfigDrivenFilterChecklist(input, insights, strictRequirementMode);
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(input);
   const accessibilityCoverageChecklist = broadChecklistEnabled ? buildAccessibilityCoverageChecklist(input, insights) : [];
   const responsiveCoverageChecklist = broadChecklistEnabled ? buildResponsiveCoverageChecklist(input, insights) : [];
   const browserCoverageChecklist = broadChecklistEnabled ? buildBrowserCompatibilityChecklist(input, insights) : [];
@@ -1059,6 +1076,7 @@ function buildInstructionText(
       '- Stay tightly anchored to the stated requirement and acceptance-criteria wording.',
       '- Add positive, negative, UI, functional, permission, and edge cases only when each case is grounded in the requirement text.',
       '- Do not add generic CRUD, browser, responsive, accessibility, performance, concurrency, security, API/DB, or cross-platform coverage just because it is common QA practice.',
+      '- Do include replay/concurrency, persistence, tenant-isolation, malformed-data, failure, and batch checks when the requirement directly establishes idempotency, an event consumer, SQL/table writes, structured source data, or tenant-scoped configuration.',
       '- Prefer exact behavior fidelity over broad inferred expansion when those two goals conflict.',
       '- If an action is allowed only for an eligible department, location, group, device, permission, or status, keep the testcase wording conditional and exact.',
       '- Do not rename exact labels, config keys, rule terms, popup names, or fixed filter values into generic business examples.'
@@ -1165,6 +1183,10 @@ function buildInstructionText(
 
   if (configDrivenFilterChecklist.length > 0) {
     lines.push(...configDrivenFilterChecklist.map((line) => `- ${line}`));
+  }
+
+  if (technicalWorkflowChecklist.length > 0) {
+    lines.push(...technicalWorkflowChecklist.map((line) => `- ${line}`));
   }
 
   if (accessibilityCoverageChecklist.length > 0) {
@@ -1323,6 +1345,7 @@ export async function runGenerateTestCasePipeline({
   const multiActorCoverageChecklist = buildMultiActorCoverageChecklist(input, requirementInsights);
   const requirementFidelityChecklist = buildRequirementFidelityChecklist(input, strictRequirementMode);
   const configDrivenFilterChecklist = buildConfigDrivenFilterChecklist(input, requirementInsights, strictRequirementMode);
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(input);
   const accessibilityCoverageChecklist = broadChecklistEnabled ? buildAccessibilityCoverageChecklist(input, requirementInsights) : [];
   const responsiveCoverageChecklist = broadChecklistEnabled ? buildResponsiveCoverageChecklist(input, requirementInsights) : [];
   const browserCoverageChecklist = broadChecklistEnabled ? buildBrowserCompatibilityChecklist(input, requirementInsights) : [];
@@ -1363,6 +1386,9 @@ export async function runGenerateTestCasePipeline({
           : '',
         configDrivenFilterChecklist.length > 0
           ? ['', 'Config-driven filter behavior checklist:', ...configDrivenFilterChecklist.map((line, index) => `${index + 1}. ${line}`)].join('\n')
+          : '',
+        technicalWorkflowChecklist.length > 0
+          ? ['', 'Event-driven / persistence / idempotency coverage checklist:', ...technicalWorkflowChecklist.map((line, index) => `${index + 1}. ${line}`)].join('\n')
           : '',
         accessibilityCoverageChecklist.length > 0
           ? ['', 'Accessibility / keyboard / ARIA coverage checklist:', ...accessibilityCoverageChecklist.map((line, index) => `${index + 1}. ${line}`)].join('\n')
@@ -1428,6 +1454,7 @@ export async function runGenerateTestCasePipeline({
         'Re-read the requirement line by line and cover every stated condition explicitly.',
         'Keep every testcase anchored to explicit requirement wording, AC points, stated permissions, stated UI actions/states, stated validation or blocked paths, or directly stated side effects.',
         'Add missing positive, negative, UI, functional, permission, validation, or edge cases only when the requirement supports them.',
+        'Treat idempotency replay/concurrency, existing-state preservation, uniqueness enforcement, tenant isolation, malformed source data, non-interference, failure/retry, batch behavior, and downstream lifecycle as supported when they are direct implications of the stated technical workflow.',
         'Remove unsupported generic CRUD, browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin-configuration scenarios.',
         'Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.',
         'Return only the structured testcase payload.',

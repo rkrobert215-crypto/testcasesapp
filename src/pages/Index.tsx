@@ -1,23 +1,39 @@
 import { Suspense, lazy, startTransition, useEffect, useRef, useState } from 'react';
 import { Header } from '@/components/Header';
 import { TestCaseInput } from '@/components/TestCaseInput';
-import { HistoryPanel } from '@/components/HistoryPanel';
-import { ArtifactHistoryPanel } from '@/components/ArtifactHistoryPanel';
+import { HistoryDrawer } from '@/components/HistoryDrawer';
 import { useTestCaseGenerator } from '@/hooks/useTestCaseGenerator';
 import { useLocalHistory } from '@/hooks/useLocalHistory';
 import { useArtifactHistory } from '@/hooks/useArtifactHistory';
 import { useCoverageValidator } from '@/hooks/useCoverageValidator';
+import type { CoverageResult } from '@/hooks/useCoverageValidator';
 import { useSmartMerge } from '@/hooks/useSmartMerge';
 import { useAuditEnhance } from '@/hooks/useAuditEnhance';
 import { HistoryEntry, InputType, TestCase } from '@/types/testCase';
 import { getUniqueAdditionalTestCases, mergeTestCasesPreservingExisting } from '@/lib/mergeTestCases';
+import {
+  countCoverageImprovementRequests,
+  selectCoverageImprovements,
+} from '@/lib/coverageQualityGate';
+import type { CoverageImprovementSelectionOptions } from '@/lib/coverageQualityGate';
 import { invokeWithRetry } from '@/lib/retryWithBackoff';
 import { parsedRowsToTestCases } from '@/lib/parsedRowsToTestCases';
 import { describeAiError } from '@/lib/providerErrors';
 import { toast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { Zap, FileSpreadsheet, Sparkles, BookOpen, Brain, FileCheck2, ListPlus, ShieldCheck } from 'lucide-react';
+import {
+  AlertTriangle,
+  BookOpen,
+  Brain,
+  CheckCircle2,
+  FileCheck2,
+  FileSpreadsheet,
+  ListPlus,
+  ShieldCheck,
+  Sparkles,
+  Zap,
+} from 'lucide-react';
 
 const RequirementAnalysisTab = lazy(() =>
   import('@/components/RequirementAnalysisTab').then((module) => ({ default: module.RequirementAnalysisTab }))
@@ -58,8 +74,57 @@ function PanelFallback({ label = 'Loading section...' }: { label?: string }) {
   );
 }
 
+interface CoverageSourceContext {
+  input: string;
+  inputType: InputType;
+  imagesBase64?: string[];
+  testCases: TestCase[];
+}
+
+type QualityGateStatus = 'passed' | 'improved' | 'attention' | 'incomplete';
+
+interface QualityGateSummary {
+  status: QualityGateStatus;
+  title: string;
+  detail: string;
+}
+
+async function requestCoverageImprovements(
+  source: CoverageSourceContext,
+  coverage: CoverageResult,
+  options: CoverageImprovementSelectionOptions = {}
+) {
+  const selection = selectCoverageImprovements(coverage, options);
+  if (selection.missingScenarios.length === 0 && selection.recommendations.length === 0) {
+    return { ...selection, additions: [] as TestCase[] };
+  }
+
+  const data = await invokeWithRetry('audit-test-cases', {
+    requirement: source.input,
+    existingTestCases: source.testCases,
+    imagesBase64: source.imagesBase64,
+    focusMissingScenarios: selection.focusMissingScenarios,
+    focusRecommendations: selection.focusRecommendations,
+  });
+
+  return {
+    ...selection,
+    additions: getUniqueAdditionalTestCases(source.testCases, data.testCases || []),
+  };
+}
+
 export default function Index() {
-  const { isLoading, testCases, stage, stageMessage, generateTestCases, clearTestCases, setTestCases } = useTestCaseGenerator();
+  const {
+    isLoading,
+    testCases,
+    stage,
+    stageMessage,
+    generateTestCases,
+    clearTestCases,
+    setTestCases,
+    updateGenerationStage,
+    deliverTestCases,
+  } = useTestCaseGenerator();
   const { history, loadHistoryEntry, saveToHistory, deleteEntry, clearHistory } = useLocalHistory();
   const { artifactHistory, saveArtifact, deleteArtifact, clearArtifacts } = useArtifactHistory();
   const { isValidating, coverageResult, validateCoverage, clearCoverageResult } = useCoverageValidator();
@@ -72,6 +137,7 @@ export default function Index() {
   const [activeTab, setActiveTab] = useState('generate');
   const [isGeneratingCoverageImprovements, setIsGeneratingCoverageImprovements] = useState(false);
   const [pendingCoverageGapCases, setPendingCoverageGapCases] = useState<TestCase[]>([]);
+  const [qualityGateSummary, setQualityGateSummary] = useState<QualityGateSummary | null>(null);
   const latestCoverageContextRef = useRef({ testCases, lastInput, lastInputType, lastImagesBase64 });
 
   useEffect(() => {
@@ -82,13 +148,110 @@ export default function Index() {
     setLastInput(input);
     setLastInputType(inputType);
     setLastImagesBase64(imagesBase64);
+    setQualityGateSummary(null);
     clearCoverageResult();
     clearDiff();
     setPendingCoverageGapCases([]);
-    
-    const generated = await generateTestCases(input, inputType, imagesBase64);
-    if (generated.length > 0) {
+
+    const runAutomaticQualityGate = inputType === 'requirement';
+    const generated = await generateTestCases(input, inputType, imagesBase64, {
+      deferDelivery: runAutomaticQualityGate,
+    });
+    if (generated.length === 0) {
+      return;
+    }
+
+    if (!runAutomaticQualityGate) {
       saveToHistory(inputType, input, generated, { imagesBase64 });
+      return;
+    }
+
+    const source: CoverageSourceContext = {
+      input,
+      inputType,
+      imagesBase64,
+      testCases: generated,
+    };
+
+    try {
+      updateGenerationStage('validating', 'Checking every requirement point against the initial testcase suite...');
+      const coverage = await validateCoverage(input, inputType, generated, imagesBase64, { silent: true });
+      if (!coverage) {
+        throw new Error('Automatic coverage validation returned no result.');
+      }
+
+      const requestedImprovementCount = countCoverageImprovementRequests(coverage);
+      let finalSuite = generated;
+      let addedCount = 0;
+
+      if (requestedImprovementCount > 0) {
+        updateGenerationStage(
+          'retrying',
+          `Converting ${coverage.missingScenarios.length} missing scenario${coverage.missingScenarios.length === 1 ? '' : 's'} and ${coverage.recommendations.length} recommendation${coverage.recommendations.length === 1 ? '' : 's'} into complete testcases...`
+        );
+        const improvements = await requestCoverageImprovements(source, coverage);
+        addedCount = improvements.additions.length;
+        if (addedCount > 0) {
+          finalSuite = mergeTestCasesPreservingExisting(generated, improvements.additions);
+          clearCoverageResult();
+        }
+      }
+
+      updateGenerationStage('finalizing', 'Deduplicating, sequencing, and preparing the final reviewed suite...');
+
+      if (requestedImprovementCount === 0) {
+        setQualityGateSummary({
+          status: 'passed',
+          title: 'Automatic QA gate passed',
+          detail: `Coverage checked at ${coverage.coverageScore}% with no missing scenarios or testable recommendations.`,
+        });
+      } else if (addedCount > 0) {
+        setQualityGateSummary({
+          status: 'improved',
+          title: 'Automatic QA gate improved the suite',
+          detail: `Coverage found ${coverage.missingScenarios.length} gap${coverage.missingScenarios.length === 1 ? '' : 's'} and ${coverage.recommendations.length} recommendation${coverage.recommendations.length === 1 ? '' : 's'}; ${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added before delivery.`,
+        });
+      } else {
+        setQualityGateSummary({
+          status: 'attention',
+          title: 'Coverage checked - review still advised',
+          detail: 'The remaining items were already covered, duplicates, clarifications, or process-only recommendations, so no fabricated testcase rows were added.',
+        });
+      }
+
+      deliverTestCases(finalSuite, {
+        title: addedCount > 0 ? 'Final reviewed suite ready' : 'Quality-checked suite ready',
+        description: addedCount > 0
+          ? `${finalSuite.length} testcases delivered after automatically adding ${addedCount} coverage improvement${addedCount === 1 ? '' : 's'}.`
+          : `${finalSuite.length} testcases delivered after the automatic coverage review.`,
+        stageMessage: 'Final quality-checked testcases ready.',
+      });
+      saveToHistory(inputType, input, finalSuite, {
+        inputSummary: `${input.slice(0, 80) || 'Full requirement'} - auto QA checked`,
+        imagesBase64,
+      });
+    } catch (error) {
+      console.error('Automatic post-generation quality gate failed:', error);
+      const aiError = describeAiError(
+        error,
+        'Automatic QA gate incomplete',
+        'The initial suite was preserved, but the automatic coverage enhancement could not finish.'
+      );
+      setQualityGateSummary({
+        status: 'incomplete',
+        title: 'Automatic QA gate incomplete',
+        detail: 'The initial suite was preserved. Use Check Coverage to retry the remaining review without regenerating it.',
+      });
+      deliverTestCases(generated, {
+        title: aiError.title,
+        description: `${aiError.description} The initial ${generated.length}-testcase suite is available and was not lost.`,
+        stageMessage: 'Initial suite ready; automatic coverage review needs retry.',
+        variant: 'destructive',
+      });
+      saveToHistory(inputType, input, generated, {
+        inputSummary: `${input.slice(0, 80) || 'Full requirement'} - QA gate needs retry`,
+        imagesBase64,
+      });
     }
   };
 
@@ -128,16 +291,9 @@ export default function Index() {
     }
 
     const sourceContext = { testCases, lastInput, lastInputType, lastImagesBase64 };
-    const hasExplicitSelection =
-      typeof options.scenarioIndexes !== 'undefined' || typeof options.recommendationIndexes !== 'undefined';
-    const selectedScenarios = typeof options.scenarioIndexes !== 'undefined'
-      ? coverageResult.missingScenarios.filter((_, index) => options.scenarioIndexes?.includes(index))
-      : hasExplicitSelection ? [] : coverageResult.missingScenarios;
-    const selectedRecommendations = typeof options.recommendationIndexes !== 'undefined'
-      ? coverageResult.recommendations.filter((_, index) => options.recommendationIndexes?.includes(index))
-      : hasExplicitSelection ? [] : coverageResult.recommendations;
+    const selection = selectCoverageImprovements(coverageResult, options);
 
-    if (selectedScenarios.length === 0 && selectedRecommendations.length === 0) {
+    if (selection.missingScenarios.length === 0 && selection.recommendations.length === 0) {
       toast({
         title: 'Nothing selected',
         description: 'Choose at least one missing scenario or recommendation to convert.',
@@ -148,13 +304,16 @@ export default function Index() {
     setIsGeneratingCoverageImprovements(true);
 
     try {
-      const data = await invokeWithRetry('audit-test-cases', {
-        requirement: sourceContext.lastInput,
-        existingTestCases: sourceContext.testCases,
-        imagesBase64: sourceContext.lastImagesBase64,
-        focusMissingScenarios: selectedScenarios.map((scenario) => scenario.scenario),
-        focusRecommendations: selectedRecommendations,
-      });
+      const improvements = await requestCoverageImprovements(
+        {
+          input: sourceContext.lastInput,
+          inputType: sourceContext.lastInputType,
+          imagesBase64: sourceContext.lastImagesBase64,
+          testCases: sourceContext.testCases,
+        },
+        coverageResult,
+        options
+      );
 
       const latestContext = latestCoverageContextRef.current;
       if (
@@ -171,8 +330,7 @@ export default function Index() {
         return;
       }
 
-      const generatedCases = data.testCases || [];
-      const uniqueGapCases = getUniqueAdditionalTestCases(sourceContext.testCases, generatedCases);
+      const uniqueGapCases = improvements.additions;
       const addedCount = uniqueGapCases.length;
 
       if (addedCount === 0) {
@@ -188,6 +346,11 @@ export default function Index() {
         setTestCases(mergedSuite);
         setPendingCoverageGapCases([]);
         clearCoverageResult();
+        setQualityGateSummary({
+          status: 'improved',
+          title: 'Coverage improvements added',
+          detail: `${addedCount} unique professional testcase${addedCount === 1 ? ' was' : 's were'} merged without changing the existing suite.`,
+        });
         saveToHistory(sourceContext.lastInputType, sourceContext.lastInput, mergedSuite, {
           inputSummary: `${sourceContext.lastInput.slice(0, 80) || 'Current suite'} - coverage improved`,
           imagesBase64: sourceContext.lastImagesBase64,
@@ -227,6 +390,7 @@ export default function Index() {
     clearDiff();
     clearAuditedTestCases();
     setPendingCoverageGapCases([]);
+    setQualityGateSummary(null);
   };
 
   const handleSmartMerge = async (parsedFiles: Record<string, string>[][]) => {
@@ -239,6 +403,7 @@ export default function Index() {
         setLastInputType('requirement');
         setLastImagesBase64(undefined);
         setPendingCoverageGapCases([]);
+        setQualityGateSummary(null);
         saveToHistory('requirement', '', merged, {
           inputSummary: 'Smart Merged Test Cases (from uploaded files)',
         });
@@ -252,6 +417,7 @@ export default function Index() {
     clearCoverageResult();
     clearDiff();
     setPendingCoverageGapCases([]);
+    setQualityGateSummary(null);
     const newCases = await auditTestCases(requirement, existingTestCases, imagesBase64);
     if (newCases.length > 0) {
       const baselineCases = parsedRowsToTestCases(existingTestCases);
@@ -296,6 +462,11 @@ export default function Index() {
     setTestCases(mergedSuite);
     setPendingCoverageGapCases([]);
     clearCoverageResult();
+    setQualityGateSummary({
+      status: 'improved',
+      title: 'Reviewed coverage cases added',
+      detail: `${uniqueSelectedCases.length} selected testcase${uniqueSelectedCases.length === 1 ? ' was' : 's were'} merged into the main table.`,
+    });
     saveToHistory(lastInputType, lastInput, mergedSuite, {
       inputSummary: `${lastInput.slice(0, 80) || 'Current suite'} - coverage improved`,
       imagesBase64: lastImagesBase64,
@@ -314,6 +485,7 @@ export default function Index() {
       setLastInputType(restoredEntry.inputType);
       setLastImagesBase64(restoredEntry.imagesBase64);
       setPendingCoverageGapCases([]);
+      setQualityGateSummary(null);
       clearCoverageResult();
       clearDiff();
       setActiveTab('generate');
@@ -330,10 +502,10 @@ export default function Index() {
       </div>
       
       <main className="container mx-auto overflow-x-hidden px-4 py-8">
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="min-w-0 space-y-6">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0 w-full">
-              <TabsList className="w-full grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 h-auto rounded-xl bg-muted/50 border border-border/60 p-1">
+        <div className="min-w-0 space-y-6">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0 w-full">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+              <TabsList className="grid h-auto w-full flex-1 grid-cols-2 rounded-xl border border-border/60 bg-muted/50 p-1 sm:grid-cols-3 xl:grid-cols-6">
                 <TabsTrigger value="generate" className="gap-2 font-semibold rounded-lg data-[state=active]:gradient-primary data-[state=active]:text-primary-foreground">
                   <Zap className="h-4 w-4" />
                   Generate
@@ -359,6 +531,17 @@ export default function Index() {
                   How to Use
                 </TabsTrigger>
               </TabsList>
+              <HistoryDrawer
+                history={history}
+                artifactHistory={artifactHistory}
+                onLoad={handleLoadHistoryEntry}
+                onDelete={deleteEntry}
+                onClear={clearHistory}
+                onDeleteArtifact={deleteArtifact}
+                onClearArtifacts={clearArtifacts}
+                restoreDisabled={isLoading || isValidating || isGeneratingCoverageImprovements}
+              />
+            </div>
               
               <TabsContent value="generate" className="mt-4">
                 <TestCaseInput
@@ -432,6 +615,26 @@ export default function Index() {
               </Suspense>
             )}
 
+            {qualityGateSummary && testCases.length > 0 && (
+              <div
+                className={
+                  qualityGateSummary.status === 'passed' || qualityGateSummary.status === 'improved'
+                    ? 'flex items-start gap-3 rounded-xl border border-positive/35 bg-positive/10 px-4 py-3 text-positive shadow-sm'
+                    : qualityGateSummary.status === 'attention'
+                      ? 'flex items-start gap-3 rounded-xl border border-accent/35 bg-accent/10 px-4 py-3 text-accent-foreground shadow-sm'
+                      : 'flex items-start gap-3 rounded-xl border border-destructive/35 bg-destructive/10 px-4 py-3 text-destructive shadow-sm'
+                }
+              >
+                {qualityGateSummary.status === 'passed' || qualityGateSummary.status === 'improved'
+                  ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
+                  : <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />}
+                <div>
+                  <p className="text-sm font-bold">{qualityGateSummary.title}</p>
+                  <p className="mt-0.5 text-xs leading-5 opacity-85">{qualityGateSummary.detail}</p>
+                </div>
+              </div>
+            )}
+
             {testCases.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card/70 px-4 py-3 shadow-sm">
                 <span className="text-sm font-semibold text-foreground">Result Actions</span>
@@ -480,6 +683,8 @@ export default function Index() {
                   inputSummary={lastInput}
                   onDeleteTestCase={(index) => {
                     setTestCases(prev => prev.filter((_, i) => i !== index));
+                    clearCoverageResult();
+                    setQualityGateSummary(null);
                   }}
                 />
               </Suspense>
@@ -523,21 +728,6 @@ export default function Index() {
                 <HelpSection />
               </Suspense>
             )}
-          </div>
-          
-          <aside className="min-w-0 space-y-4">
-            <HistoryPanel
-              history={history}
-              onLoad={handleLoadHistoryEntry}
-              onDelete={deleteEntry}
-              onClear={clearHistory}
-            />
-            <ArtifactHistoryPanel
-              history={artifactHistory}
-              onDelete={deleteArtifact}
-              onClear={clearArtifacts}
-            />
-          </aside>
         </div>
       </main>
     </div>

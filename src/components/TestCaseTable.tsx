@@ -190,7 +190,7 @@ export function TestCaseTable({
             {testCases.length} TCs
           </span>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {onValidateCoverage && (
             <Button
               variant="secondary"
@@ -243,11 +243,15 @@ export function TestCaseTable({
         </div>
       </div>
 
+      <div className="border-b border-border/50 bg-muted/20 px-5 py-2 text-xs text-muted-foreground">
+        Scroll horizontally to review all enterprise fields. Row and testcase identifiers remain visible while you move across the table.
+      </div>
+
       <div className="max-w-full overflow-x-auto">
-        <Table>
+        <Table className="min-w-[2800px] table-fixed">
           <TableHeader>
             <TableRow className="bg-muted/40 hover:bg-muted/40">
-              <TableHead className="w-16 font-bold text-foreground">Row</TableHead>
+              <TableHead className="sticky left-0 z-20 w-16 bg-muted font-bold text-foreground">Row</TableHead>
               {COLUMNS.map((column, columnIndex) => (
                 <React.Fragment key={column.key}>
                   {columnIndex === 6 && onDeleteTestCase && <TableHead className="w-10 font-bold text-foreground"></TableHead>}
@@ -274,7 +278,7 @@ export function TestCaseTable({
           <TableBody>
             {testCases.map((tc, index) => (
               <TableRow key={tc.id || index} className="hover:bg-muted/30 transition-colors group">
-                <TableCell>
+                <TableCell className="sticky left-0 z-10 bg-card align-top group-hover:bg-muted/30">
                   <button
                     onClick={() => copyRow(tc)}
                     className={cn(
@@ -292,7 +296,7 @@ export function TestCaseTable({
                   const value = String(tc[column.key] ?? '');
 
                   const deleteCell = columnIndex === 6 && onDeleteTestCase ? (
-                    <TableCell key="__delete">
+                    <TableCell key="__delete" className="align-top">
                       <button
                         onClick={() => onDeleteTestCase(index)}
                         className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all opacity-0 group-hover:opacity-100"
@@ -312,7 +316,7 @@ export function TestCaseTable({
                     return (
                       <React.Fragment key={column.key}>
                         {deleteCell}
-                        <TableCell>
+                        <TableCell className="align-top">
                           <div className="flex items-center gap-2">
                             <span className={cn('px-2.5 py-1 rounded-full text-xs font-bold border', chipColors)}>
                               {value || 'N/A'}
@@ -339,7 +343,7 @@ export function TestCaseTable({
                       {deleteCell}
                       <TableCell
                         className={cn(
-                          'text-sm',
+                          'align-top text-sm break-words',
                           column.key === 'id' && 'font-mono font-bold text-primary',
                           column.key === 'requirementReference' && 'font-mono text-primary/90',
                           column.key === 'module' && 'font-semibold text-foreground',

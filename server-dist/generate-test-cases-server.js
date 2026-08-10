@@ -1083,8 +1083,258 @@ function stableStringify(value) {
   return `{${entries.join(",")}}`;
 }
 
+// supabase/functions/_shared/technicalWorkflowCoverage.ts
+function includesAny(text, terms) {
+  return terms.some((term) => text.includes(term));
+}
+function detectTechnicalWorkflowSignals(input) {
+  const text = input.toLowerCase();
+  const eventDriven = includesAny(text, [
+    "consumer",
+    "lambda",
+    "webhook",
+    "background job",
+    "upsert",
+    "status transition",
+    "transitions to",
+    "transitioned to"
+  ]);
+  const persistence = includesAny(text, [
+    "insert into",
+    "on duplicate key",
+    "database",
+    "persisted",
+    "persistence",
+    "document_status",
+    "created_date",
+    "createddate",
+    "sales_order_id",
+    "buyer_id"
+  ]);
+  const idempotency = includesAny(text, [
+    "idempotent",
+    "on duplicate key",
+    "re-process",
+    "reprocess",
+    "re-processing",
+    "reprocessing",
+    "replay",
+    "unique constraint",
+    "unique index"
+  ]);
+  const tenantScoped = includesAny(text, [
+    "tenant",
+    "account configuration",
+    "feature flag",
+    "featurepoeenabled",
+    "poeenabled"
+  ]);
+  const structuredInput = includesAny(text, [
+    "additional fields",
+    "additional_fields",
+    "json",
+    "shipping address",
+    "address field",
+    "origin",
+    "exemption"
+  ]);
+  const batchProcessing = includesAny(text, [
+    "batch",
+    "consumer",
+    "lambda",
+    "upserts",
+    "multiple orders",
+    "multiple records"
+  ]);
+  const downstreamLifecycle = includesAny(text, [
+    "upload",
+    "prompted to",
+    "document status",
+    "document_status",
+    "notification",
+    "downstream"
+  ]);
+  const groupCount = [
+    eventDriven,
+    persistence,
+    idempotency,
+    tenantScoped,
+    structuredInput,
+    batchProcessing,
+    downstreamLifecycle
+  ].filter(Boolean).length;
+  return {
+    detected: eventDriven && persistence || idempotency || groupCount >= 3,
+    eventDriven,
+    persistence,
+    idempotency,
+    tenantScoped,
+    structuredInput,
+    batchProcessing,
+    downstreamLifecycle
+  };
+}
+function buildTechnicalWorkflowCoverageChecklist(input) {
+  const signals = detectTechnicalWorkflowSignals(input);
+  if (!signals.detected) {
+    return [];
+  }
+  const lines = [
+    "This is an event-driven, integration, or data-persistence workflow. Treat backend-observable business effects as first-class QA coverage rather than testing only the happy-path row creation.",
+    "Build a trigger matrix across every stated status, event path, supported entity/order type, qualifying condition, and non-qualifying condition. If the requirement says all types, verify every remaining supported type instead of using only one generic non-default example.",
+    "Verify exact persisted identifiers, statuses, timestamps, ownership, and casing named by the requirement, plus the downstream business-visible result."
+  ];
+  if (signals.idempotency) {
+    lines.push(
+      "Idempotency is a complete risk family: cover sequential replay of the same event, chained qualifying transitions, concurrent/parallel duplicate delivery, and an exact one-record outcome.",
+      "When a record already exists, verify reprocessing does not reset an advanced status or overwrite the original creation timestamp.",
+      "Verify the database uniqueness constraint or index actually supports the stated duplicate-prevention statement such as ON DUPLICATE KEY; application wording alone is not proof of idempotency."
+    );
+  }
+  if (signals.tenantScoped) {
+    lines.push(
+      "For tenant/customer-scoped flags, cover enabled, disabled, and missing configuration independently, including a mixed-tenant batch where only the eligible tenant receives the side effect.",
+      "Verify persisted tenant/customer, owner, buyer, and entity identifiers cannot be crossed or mismatched when multiple tenants are processed together."
+    );
+  }
+  if (signals.structuredInput) {
+    lines.push(
+      "Cover NULL or missing source records/fields and malformed structured data without an unhandled processing failure.",
+      "For exemptions or exact string flags stored in structured data, cover absent/NULL, another value, and documented casing/whitespace behavior. If normalization is unspecified, make the expected behavior an explicit clarification rather than inventing it."
+    );
+  }
+  if (signals.persistence) {
+    lines.push(
+      "Verify the new row or side effect is added without modifying, deleting, duplicating, or resetting unrelated existing rows or columns.",
+      "Verify normal processing continues unchanged for records that do not qualify for the new side effect."
+    );
+  }
+  if (signals.eventDriven) {
+    lines.push(
+      "Cover side-effect insert/update failure isolation so the main consumer/upsert flow follows the stated or configured transaction behavior.",
+      "Cover repeated failure using the configured retry and dead-letter policy. Do not invent retry counts or queue names when they are unspecified."
+    );
+  }
+  if (signals.batchProcessing) {
+    lines.push(
+      "Cover mixed qualifying/non-qualifying and large-batch processing for correctness, duplicate prevention, tenant isolation, and completion within the configured timeout or performance baseline."
+    );
+  }
+  if (signals.downstreamLifecycle) {
+    lines.push(
+      "Follow the downstream lifecycle after the requirement row or status is created: verify the user prompt/action appears, the follow-up action is possible, and the persisted status advances without creating another requirement row when those outcomes are supported."
+    );
+  }
+  return lines;
+}
+function buildTechnicalCoverageExpectations(input) {
+  const signals = detectTechnicalWorkflowSignals(input);
+  if (!signals.detected) {
+    return [];
+  }
+  const expectations = [
+    {
+      label: "complete trigger/type/status matrix",
+      evidenceTerms: ["every remaining", "every supported", "all order type", "all supported type", "trigger matrix"]
+    }
+  ];
+  if (signals.idempotency) {
+    expectations.push(
+      {
+        label: "sequential replay/reprocessing idempotency",
+        evidenceTerms: ["replay", "re-process", "reprocess", "re-processing", "same event"]
+      },
+      {
+        label: "concurrent duplicate-event idempotency",
+        evidenceTerms: ["concurrent", "parallel", "simultaneous", "race condition"]
+      },
+      {
+        label: "existing advanced status preservation",
+        evidenceTerms: ["not reset", "remain unchanged", "status preserved", "preserve existing status", "uploaded or approved"]
+      },
+      {
+        label: "original creation timestamp preservation",
+        evidenceTerms: ["original created", "created_date preserved", "createddate preserved", "timestamp preserved", "not overwritten"]
+      },
+      {
+        label: "database uniqueness enforcement for duplicate prevention",
+        evidenceTerms: ["unique constraint", "unique index", "on duplicate key"]
+      }
+    );
+  }
+  if (signals.tenantScoped) {
+    expectations.push(
+      {
+        label: "mixed-tenant feature-flag isolation",
+        evidenceTerms: ["mixed-tenant", "mixed tenant", "two tenants", "only for the tenant", "eligible tenant"]
+      },
+      {
+        label: "cross-tenant identifier safety",
+        evidenceTerms: ["cross-tenant", "cross tenant", "tenant mismatch", "buyer/order mismatch", "identifier mismatch"]
+      }
+    );
+  }
+  if (signals.structuredInput) {
+    expectations.push(
+      {
+        label: "NULL or missing source-data handling",
+        evidenceTerms: ["null or missing", "missing shipping address", "null shipping address", "absent shipping address"]
+      },
+      {
+        label: "malformed structured-data handling",
+        evidenceTerms: ["malformed json", "malformed additional", "invalid json", "malformed data"]
+      },
+      {
+        label: "casing and whitespace behavior for exact exemptions",
+        evidenceTerms: ["casing", "case-sensitive", "case insensitive", "case-insensitive", "whitespace"]
+      }
+    );
+  }
+  if (signals.persistence) {
+    expectations.push(
+      {
+        label: "non-interference with existing related records",
+        evidenceTerms: ["existing document rows", "unrelated existing", "without modifying existing", "does not modify existing"]
+      },
+      {
+        label: "non-qualifying main-flow regression protection",
+        evidenceTerms: ["normal order upsert", "main process", "non-qualifying orders", "normal processing continue"]
+      }
+    );
+  }
+  if (signals.eventDriven) {
+    expectations.push(
+      {
+        label: "side-effect failure isolation from the main flow",
+        evidenceTerms: ["insert fails", "insert failure", "main process", "main flow", "does not block"]
+      },
+      {
+        label: "repeated-failure retry/dead-letter behavior",
+        evidenceTerms: ["dead letter", "dead-letter", "dlq", "retry policy", "retried"]
+      }
+    );
+  }
+  if (signals.batchProcessing) {
+    expectations.push({
+      label: "large-batch correctness and performance",
+      evidenceTerms: ["large batch", "high volume", "configured timeout", "processing latency", "performance baseline"]
+    });
+  }
+  if (signals.downstreamLifecycle) {
+    expectations.push({
+      label: "downstream action and persisted status lifecycle",
+      evidenceTerms: ["status transition", "status advances", "pending to uploaded", "document_status transition", "after the buyer uploads"]
+    });
+  }
+  return expectations;
+}
+function findMissingTechnicalWorkflowCoverage(input, suiteText) {
+  const normalizedSuite = suiteText.toLowerCase();
+  return buildTechnicalCoverageExpectations(input).filter((expectation) => !includesAny(normalizedSuite, expectation.evidenceTerms)).map((expectation) => expectation.label);
+}
+
 // supabase/functions/_shared/requirementAnalysis.ts
-var REQUIREMENT_ANALYSIS_CACHE_VERSION = "2026-04-08-v4";
+var REQUIREMENT_ANALYSIS_CACHE_VERSION = "2026-08-10-v5";
 var requirementAnalysisSchema = {
   type: "object",
   properties: {
@@ -1175,6 +1425,7 @@ YOUR JOB:
 - Identify whether behavior depends on tenant settings, configuration toggles, feature flags, permissions, role differences, redirects, or login/MFA state when that context is present.
 - Identify whether onboarding, account setup, customer/supplier/buyer/reseller actor differences, notifications/emails, exports/downloads, or API/network side effects are part of the requirement when that context is present.
 - Identify whether accessibility, responsive/mobile behavior, cross-browser support, concurrency, performance/volume expectations, or deeper API/DB verification are part of the requirement when that context is present.
+- When the requirement describes an event consumer, status transition, database/table write, idempotency, feature flag, or structured source data, decompose its direct technical risks: trigger matrix, replay/concurrent duplication, existing-state preservation, uniqueness enforcement, tenant isolation, malformed data, non-interference, failure/retry behavior, batch processing, and downstream lifecycle.
 - Preserve exact labels, config keys, rule terms, and fixed behavior names from the requirement when they matter.
 - Tell the tester WHAT to test.
 - Tell the tester HOW to test it.
@@ -1203,6 +1454,7 @@ async function analyzeRequirementText(aiSettings, requirement, featureName) {
   const profile = getGenerationModeProfile(generationMode);
   const strictRequirementMode = isStrictRequirementMode(aiSettings);
   const trimmedRequirement = String(requirement).trim();
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(trimmedRequirement);
   const cacheKey = await computeRequestCacheKey("shared-requirement-analysis", aiSettings, {
     version: REQUIREMENT_ANALYSIS_CACHE_VERSION,
     requirement: trimmedRequirement
@@ -1233,7 +1485,12 @@ async function analyzeRequirementText(aiSettings, requirement, featureName) {
           `Generation style mode: ${profile.label}`,
           "",
           `Requirement to analyze:`,
-          trimmedRequirement
+          trimmedRequirement,
+          ...technicalWorkflowChecklist.length > 0 ? [
+            "",
+            "Technical workflow risks to classify as explicit points, direct implications, recommendations, or clarifications:",
+            ...technicalWorkflowChecklist.map((line, index) => `${index + 1}. ${line}`)
+          ] : []
         ].join("\n")
       }
     ],
@@ -1251,6 +1508,9 @@ async function analyzeRequirementText(aiSettings, requirement, featureName) {
       "Check whether tenant-setting, permission, role, redirect, or MFA/login dependencies were captured when the requirement clearly supports them.",
       "Check whether onboarding, account setup, export/download, notification/email, API/network side effects, and buyer/customer/supplier/reseller actor differences were captured when the requirement clearly supports them.",
       "Check whether accessibility, responsive/mobile, cross-browser, concurrency, performance/volume, and deeper API/DB verification obligations were captured when the requirement clearly supports them.",
+      ...technicalWorkflowChecklist.length > 0 ? [
+        "Check whether event replay/concurrency, existing-record preservation, uniqueness enforcement, tenant isolation, malformed source data, non-interference, failure/retry, batch, and downstream lifecycle risks were classified completely without inventing unspecified constants or policies."
+      ] : [],
       ...strictRequirementMode ? [
         "Check whether exact labels, config keys, and fixed logic terms were preserved instead of replaced by generic examples."
       ] : [],
@@ -1386,7 +1646,7 @@ function normalizeTitleForComparison(value) {
 }
 
 // supabase/functions/_shared/generateTestCasePipeline.ts
-var GENERATE_CACHE_VERSION = "generate-test-cases-2026-05-24-v9";
+var GENERATE_CACHE_VERSION = "generate-test-cases-2026-08-10-v10";
 var INPUT_TYPE_PROMPTS = {
   requirement: `You are a senior QA engineer with 15+ years of manual testing experience.
 
@@ -1457,6 +1717,7 @@ function buildSystemPrompt(inputType, generationMode, strictRequirementMode) {
       "- Every testcase must map to explicit requirement wording, an acceptance-criteria point, a stated permission or role, a stated UI action/state, a stated validation or blocked path, or a directly stated user-visible side effect.",
       "- Cover positive, negative, functional, UI, permission, and edge cases only where those categories are supported by the requirement.",
       "- Do not add browser, responsive, performance, concurrency, accessibility, security, API/DB, or configuration-admin scenarios unless the requirement explicitly names that obligation.",
+      "- Event replay, concurrent duplicate delivery, persistence constraints, tenant isolation, malformed source data, and failure handling are allowed when they are direct verification obligations of stated idempotency, SQL/database writes, event consumers, feature flags, or structured-data rules.",
       "- If the requirement limits an action to eligible departments, locations, groups, devices, statuses, roles, or permissions, test those constraints exactly and do not generalize them.",
       "- Preserve exact labels, authority names, config keys, rule names, popup names, and fixed logic terms throughout the suite."
     );
@@ -1998,6 +2259,9 @@ function estimateMinimumTestCases(inputType, input, insights, strictRequirementM
     if (isConfigDrivenFilterRequirement(input, insights)) {
       baseline2 = Math.max(baseline2, Math.min(40, 10 + explicitPointCount * 2));
     }
+    if (detectTechnicalWorkflowSignals(input).detected) {
+      baseline2 = Math.max(baseline2, input.length > 1600 ? 34 : 28);
+    }
     return baseline2;
   }
   const formLike = isFormLikeRequirement(input, insights);
@@ -2139,15 +2403,21 @@ function validateGeneratedCases(inputType, input, testCases, insights, strictReq
       }
     }
   }
+  const missingTechnicalCoverage = findMissingTechnicalWorkflowCoverage(input, combinedText);
+  if (missingTechnicalCoverage.length > 0) {
+    violations.push(
+      `Technical workflow coverage is incomplete: ${missingTechnicalCoverage.join(", ")}.`
+    );
+  }
   return { valid: violations.length === 0, violations };
 }
 var STRICT_UNSUPPORTED_TOPICS = [
   { label: "cross-browser compatibility", generated: ["cross-browser", "browser compatibility"], required: ["cross-browser", "browser compatibility"] },
   { label: "responsive/mobile coverage", generated: ["responsive", "mobile layout", "tablet", "touch behavior"], required: ["responsive", "mobile", "tablet", "touch"] },
-  { label: "performance/load coverage", generated: ["performance", "load time", "large-data", "large data", "slow response"], required: ["performance", "load time", "large data", "slow response"] },
-  { label: "concurrency coverage", generated: ["concurrency", "multi-user", "stale data", "duplicate submit"], required: ["concurrency", "multi-user", "stale data", "duplicate submit"] },
+  { label: "performance/load coverage", generated: ["performance", "load time", "large-data", "large data", "slow response"], required: ["performance", "load time", "large data", "slow response", "batch", "consumer", "lambda", "bulk", "upserts"] },
+  { label: "concurrency coverage", generated: ["concurrency", "concurrent", "parallel", "multi-user", "stale data", "duplicate submit"], required: ["concurrency", "concurrent", "parallel", "multi-user", "stale data", "duplicate submit", "idempotent", "on duplicate key", "duplicate key", "replay", "re-process", "reprocess", "unique constraint", "unique index"] },
   { label: "accessibility coverage", generated: ["accessibility", "aria", "screen reader", "keyboard navigation", "focus order"], required: ["accessibility", "aria", "screen reader", "keyboard", "focus"] },
-  { label: "API/DB verification", generated: ["api response", "api payload", "database", "db verification", "rollback"], required: ["api response", "api payload", "database", "db verification", "rollback"] },
+  { label: "API/DB verification", generated: ["api response", "api payload", "database", "db verification", "rollback", "unique constraint", "unique index"], required: ["api response", "api payload", "database", "db verification", "rollback", "insert into", "on duplicate key", "table", "row", "column", "constraint", "index", "created_date", "createddate"] },
   { label: "generic CRUD boundary coverage", generated: ["breadcrumb", "tab order", "special character", "max length", "maximum length", "over-limit", "leading/trailing spaces"], required: ["breadcrumb", "tab order", "special character", "max length", "maximum length", "over-limit", "leading/trailing spaces"] },
   {
     label: "unstated list capabilities",
@@ -2217,6 +2487,7 @@ function buildInstructionText(input, images, inputType, insights, generationMode
   const multiActorCoverageChecklist = buildMultiActorCoverageChecklist(input, insights);
   const requirementFidelityChecklist = buildRequirementFidelityChecklist(input, strictRequirementMode);
   const configDrivenFilterChecklist = buildConfigDrivenFilterChecklist(input, insights, strictRequirementMode);
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(input);
   const accessibilityCoverageChecklist = broadChecklistEnabled ? buildAccessibilityCoverageChecklist(input, insights) : [];
   const responsiveCoverageChecklist = broadChecklistEnabled ? buildResponsiveCoverageChecklist(input, insights) : [];
   const browserCoverageChecklist = broadChecklistEnabled ? buildBrowserCompatibilityChecklist(input, insights) : [];
@@ -2255,6 +2526,7 @@ function buildInstructionText(input, images, inputType, insights, generationMode
       "- Stay tightly anchored to the stated requirement and acceptance-criteria wording.",
       "- Add positive, negative, UI, functional, permission, and edge cases only when each case is grounded in the requirement text.",
       "- Do not add generic CRUD, browser, responsive, accessibility, performance, concurrency, security, API/DB, or cross-platform coverage just because it is common QA practice.",
+      "- Do include replay/concurrency, persistence, tenant-isolation, malformed-data, failure, and batch checks when the requirement directly establishes idempotency, an event consumer, SQL/table writes, structured source data, or tenant-scoped configuration.",
       "- Prefer exact behavior fidelity over broad inferred expansion when those two goals conflict.",
       "- If an action is allowed only for an eligible department, location, group, device, permission, or status, keep the testcase wording conditional and exact.",
       "- Do not rename exact labels, config keys, rule terms, popup names, or fixed filter values into generic business examples."
@@ -2350,6 +2622,9 @@ function buildInstructionText(input, images, inputType, insights, generationMode
   }
   if (configDrivenFilterChecklist.length > 0) {
     lines.push(...configDrivenFilterChecklist.map((line) => `- ${line}`));
+  }
+  if (technicalWorkflowChecklist.length > 0) {
+    lines.push(...technicalWorkflowChecklist.map((line) => `- ${line}`));
   }
   if (accessibilityCoverageChecklist.length > 0) {
     lines.push(...accessibilityCoverageChecklist.map((line) => `- ${line}`));
@@ -2468,6 +2743,7 @@ async function runGenerateTestCasePipeline({
   const multiActorCoverageChecklist = buildMultiActorCoverageChecklist(input, requirementInsights);
   const requirementFidelityChecklist = buildRequirementFidelityChecklist(input, strictRequirementMode);
   const configDrivenFilterChecklist = buildConfigDrivenFilterChecklist(input, requirementInsights, strictRequirementMode);
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(input);
   const accessibilityCoverageChecklist = broadChecklistEnabled ? buildAccessibilityCoverageChecklist(input, requirementInsights) : [];
   const responsiveCoverageChecklist = broadChecklistEnabled ? buildResponsiveCoverageChecklist(input, requirementInsights) : [];
   const browserCoverageChecklist = broadChecklistEnabled ? buildBrowserCompatibilityChecklist(input, requirementInsights) : [];
@@ -2489,6 +2765,7 @@ async function runGenerateTestCasePipeline({
         multiActorCoverageChecklist.length > 0 ? ["", "Multi-actor / role coverage checklist:", ...multiActorCoverageChecklist.map((line, index) => `${index + 1}. ${line}`)].join("\n") : "",
         requirementFidelityChecklist.length > 0 ? ["", "Requirement fidelity checklist:", ...requirementFidelityChecklist.map((line, index) => `${index + 1}. ${line}`)].join("\n") : "",
         configDrivenFilterChecklist.length > 0 ? ["", "Config-driven filter behavior checklist:", ...configDrivenFilterChecklist.map((line, index) => `${index + 1}. ${line}`)].join("\n") : "",
+        technicalWorkflowChecklist.length > 0 ? ["", "Event-driven / persistence / idempotency coverage checklist:", ...technicalWorkflowChecklist.map((line, index) => `${index + 1}. ${line}`)].join("\n") : "",
         accessibilityCoverageChecklist.length > 0 ? ["", "Accessibility / keyboard / ARIA coverage checklist:", ...accessibilityCoverageChecklist.map((line, index) => `${index + 1}. ${line}`)].join("\n") : "",
         responsiveCoverageChecklist.length > 0 ? ["", "Responsive / mobile / touch coverage checklist:", ...responsiveCoverageChecklist.map((line, index) => `${index + 1}. ${line}`)].join("\n") : "",
         browserCoverageChecklist.length > 0 ? ["", "Cross-browser compatibility coverage checklist:", ...browserCoverageChecklist.map((line, index) => `${index + 1}. ${line}`)].join("\n") : "",
@@ -2535,6 +2812,7 @@ async function runGenerateTestCasePipeline({
     "Re-read the requirement line by line and cover every stated condition explicitly.",
     "Keep every testcase anchored to explicit requirement wording, AC points, stated permissions, stated UI actions/states, stated validation or blocked paths, or directly stated side effects.",
     "Add missing positive, negative, UI, functional, permission, validation, or edge cases only when the requirement supports them.",
+    "Treat idempotency replay/concurrency, existing-state preservation, uniqueness enforcement, tenant isolation, malformed source data, non-interference, failure/retry, batch behavior, and downstream lifecycle as supported when they are direct implications of the stated technical workflow.",
     "Remove unsupported generic CRUD, browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin-configuration scenarios.",
     "Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.",
     "Return only the structured testcase payload."
@@ -3181,6 +3459,8 @@ var HOST = process.env.LOCAL_AI_SERVER_HOST || "127.0.0.1";
 var PORT = Number(process.env.LOCAL_AI_SERVER_PORT || 8787);
 var MAX_BODY_BYTES = 20 * 1024 * 1024;
 var CACHE_TTL_MS2 = 5 * 60 * 1e3;
+var AUDIT_CACHE_VERSION = "audit-test-cases-2026-08-10-v2";
+var COVERAGE_CACHE_VERSION = "validate-coverage-2026-08-10-v2";
 var GENERATION_TIME_BUDGET_MS = 20 * 60 * 1e3;
 var RETRY_STAGE_RESERVE_MS = 3 * 60 * 1e3;
 var FUNCTION_ROUTE_PREFIX = "/functions/v1";
@@ -3444,7 +3724,8 @@ async function handleAuditTestCases(body) {
   const aiSettings = body.aiSettings;
   const generationMode = getGenerationMode(aiSettings);
   const generationProfile = getGenerationModeProfile(generationMode);
-  const cacheKey = images.length === 0 ? await computeRequestCacheKey("audit-test-cases", aiSettings, {
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(requirement);
+  const cacheKey = images.length === 0 ? await computeRequestCacheKey(AUDIT_CACHE_VERSION, aiSettings, {
     requirement,
     existingTestCases,
     focusMissingScenarios: requestedCoverageGaps,
@@ -3477,6 +3758,8 @@ STRICT RULES:
 - Do not invent features that are not in the requirement.
 - Convert focused coverage recommendations into executable testcase rows only when they describe verifiable behavior or a real coverage need.
 - Never turn process-only, documentation-only, or clarification advice into fabricated product behavior.
+- For event-driven persistence workflows, treat replay/concurrency idempotency, existing-state/timestamp preservation, uniqueness enforcement, tenant isolation, malformed data, non-interference, failure/retry, batch behavior, and downstream lifecycle as separate risks when supported by the requirement.
+- Every focused missing scenario and every testable recommendation must map to at least one returned testcase unless it is already covered by the existing suite.
 
 GENERATION STYLE MODE: ${generationProfile.label}
 ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join("\n")}`;
@@ -3508,6 +3791,11 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join("\n")}`;
         ``,
         `Style guidance:`,
         ...generationProfile.auditPromptLines.map((line) => `- ${line}`),
+        ...technicalWorkflowChecklist.length > 0 ? [
+          ``,
+          `Technical workflow coverage checklist:`,
+          ...technicalWorkflowChecklist.map((line, index) => `${index + 1}. ${line}`)
+        ] : [],
         ``,
         ...requestedCoverageGaps.length > 0 ? [
           `Coverage gaps to generate full testcase rows for:`,
@@ -3545,7 +3833,8 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join("\n")}`;
       "Check whether the testcase names, steps, and expected results read like strong senior-QA work.",
       "Check whether high-risk, negative, and edge gaps are covered rather than only happy-path improvements.",
       ...requestedCoverageGaps.length > 0 ? ["Check whether the returned cases directly address the requested missing coverage scenarios instead of drifting into unrelated additions."] : [],
-      ...requestedCoverageRecommendations.length > 0 ? ["Check whether every testable recommendation is converted into concrete steps and observable expected results without fabricating unspecified behavior."] : []
+      ...requestedCoverageRecommendations.length > 0 ? ["Check whether every testable recommendation is converted into concrete steps and observable expected results without fabricating unspecified behavior."] : [],
+      ...technicalWorkflowChecklist.length > 0 ? ["Check whether the enhancement set closes the applicable replay/concurrency, preservation, uniqueness, tenant-isolation, malformed-data, non-interference, failure/retry, batch, and downstream-lifecycle gaps."] : []
     ],
     correctionReminder: "Return only materially useful new cases that close real coverage gaps or implement testable recommendations and read like an enterprise-ready senior-QA enhancement set."
   });
@@ -3650,7 +3939,8 @@ async function handleValidateCoverage(body) {
   }
   const generationMode = getGenerationMode(aiSettings);
   const generationProfile = getGenerationModeProfile(generationMode);
-  const cacheKey = images.length === 0 ? await computeRequestCacheKey("validate-coverage", aiSettings, { input, inputType, testCases }) : null;
+  const technicalWorkflowChecklist = buildTechnicalWorkflowCoverageChecklist(input);
+  const cacheKey = images.length === 0 ? await computeRequestCacheKey(COVERAGE_CACHE_VERSION, aiSettings, { input, inputType, testCases }) : null;
   if (cacheKey) {
     const cached = getCachedRequest(cacheKey);
     if (cached) {
@@ -3667,8 +3957,8 @@ GENERATION STYLE MODE: ${generationProfile.label}
 REQUIREMENT/INPUT:
 ${input || "No text input provided"}
 
-GENERATED TEST CASES (${testCases.length} total):
-${testCases.map((testCase, index) => `${index + 1}. [${testCase.type ?? "Unknown"}] ${testCase.testCase ?? "Untitled test case"}`).join("\n")}
+GENERATED TEST CASES (${testCases.length} total, complete rows):
+${JSON.stringify(testCases, null, 2)}
 `;
   if (images.length > 0) {
     validationPrompt += `
@@ -3678,6 +3968,12 @@ I've also attached ${images.length} UI screenshot(s)/mockup(s) that were used fo
 
 Style guidance:
 ${generationProfile.coveragePromptLines.map((line) => `- ${line}`).join("\n")}`;
+  if (technicalWorkflowChecklist.length > 0) {
+    validationPrompt += `
+
+Technical workflow coverage checklist:
+${technicalWorkflowChecklist.map((line, index) => `${index + 1}. ${line}`).join("\n")}`;
+  }
   userParts.push({ type: "text", text: validationPrompt });
   for (const image of images) {
     userParts.push({ type: "image", dataUrl: image });
@@ -3689,6 +3985,13 @@ ${generationProfile.coveragePromptLines.map((line) => `- ${line}`).join("\n")}`;
     systemPrompt: `You are a senior QA engineer validating test coverage. Analyze the requirement and test cases to identify gaps.
 
 Be thorough but practical. Focus on ACTUAL missing scenarios, not minor variations.
+
+AUDIT RULES:
+- Read complete testcase rows, including requirement reference, scenario, steps, expected result, test data, and post-condition. A title alone is not proof of coverage.
+- Put every missing executable behavior in missingScenarios; do not hide executable gaps only inside recommendations.
+- Phrase testable recommendations as concrete coverage needs that can be converted into full testcase rows.
+- Prefix non-testable ambiguity with "Clarification:" and process-only advice with "Process:" so it is not fabricated into product behavior.
+- For technical workflows, audit replay/concurrency idempotency, preservation of existing states/timestamps, uniqueness enforcement, tenant isolation, NULL/malformed data, non-interference, failure/retry, batch behavior, and downstream lifecycle when supported.
 
 GENERATION STYLE MODE: ${generationProfile.label}
 ${generationProfile.coveragePromptLines.map((line) => `- ${line}`).join("\n")}`,
@@ -3729,7 +4032,9 @@ ${generationProfile.coveragePromptLines.map((line) => `- ${line}`).join("\n")}`,
       "Check whether the score matches the actual gap severity instead of sounding inflated.",
       "Check whether covered areas, missing scenarios, and recommendations are requirement-driven and not generic filler.",
       "Check whether high-risk and high-priority missing scenarios are surfaced clearly.",
-      "Check whether the report would be useful to a senior QA reviewer making next-step decisions."
+      "Check whether the report would be useful to a senior QA reviewer making next-step decisions.",
+      "Check whether every executable gap is represented in missingScenarios or a clearly testable recommendation, while clarifications and process advice stay explicitly classified.",
+      ...technicalWorkflowChecklist.length > 0 ? ["Check the technical workflow risk family line by line, especially idempotency replay/concurrency, state preservation, uniqueness, tenant isolation, malformed data, non-interference, failure/retry, batch behavior, and downstream status lifecycle."] : []
     ],
     correctionReminder: "Tighten the coverage judgment so the report is honest, risk-aware, and useful for real QA decision-making."
   });
