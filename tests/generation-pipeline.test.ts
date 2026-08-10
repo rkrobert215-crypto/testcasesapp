@@ -5,6 +5,8 @@ import {
   type ClaudeCliGenerationOptions,
 } from '../supabase/functions/_shared/aiClient.ts';
 import {
+  findStrictRequirementContradictions,
+  removeUnsupportedStrictTestCases,
   runGenerateTestCasePipeline,
   validateGeneratedCases,
 } from '../supabase/functions/_shared/generateTestCasePipeline.ts';
@@ -80,4 +82,63 @@ test('Claude Subscription full-suite generation uses one deadline-safe invocatio
   } finally {
     configureClaudeCliStructuredGenerator(null);
   }
+});
+
+test('strict requirement filtering removes contradictions and unsupported assumptions', () => {
+  const requirement = 'POE applies to all order types with no STOCKLIST restriction. customerOrigin ItochuJapan is exempt.';
+  const valid = professionalCase(0);
+  const validNegativeControl = {
+    ...professionalCase(4),
+    id: 'TC_005',
+    scenario: 'Reject a non-freight-forward STOCKLIST order',
+    testCase: 'Verify that no POE row is created for a STOCKLIST order sent to a non-freight-forward address',
+    testData: 'STOCKLIST order and standard shipping address; no restriction is applied based on order type.',
+    preconditions: 'Assuming a test tenant exists, enable POE and prepare both STOCKLIST and standard orders.',
+    expectedResult: 'No POE row is created because the shipping address is not a freight-forward destination.',
+    type: 'Negative',
+  };
+  const validAllTypes = {
+    ...professionalCase(5),
+    id: 'TC_006',
+    scenario: 'Create POE for every supported order type',
+    testCase: 'Verify that POE creation applies to STOCKLIST and all other order types without restriction',
+    testData: 'STOCKLIST and non-STOCKLIST qualifying orders.',
+    expectedResult: 'Exactly one POE row is created for each qualifying order type, including STOCKLIST.',
+    type: 'Positive',
+  };
+  const stocklistContradiction = {
+    ...professionalCase(1),
+    id: 'TC_002',
+    testCase: 'Verify that no POE row is created for STOCKLIST orders',
+    expectedResult: 'STOCKLIST orders are excluded and no POE row is created.',
+  };
+  const defaultAssumption = {
+    ...professionalCase(2),
+    id: 'TC_003',
+    testCase: 'Verify that a missing flag defaults to disabled',
+    expectedResult: 'No row is created, assuming a default-off behavior.',
+  };
+  const normalizationAssumption = {
+    ...professionalCase(3),
+    id: 'TC_004',
+    testCase: 'Verify that ItochuJapan casing and whitespace variants remain exempt',
+    expectedResult: 'Casing and whitespace are normalized before comparison.',
+  };
+
+  assert.match(findStrictRequirementContradictions(requirement, stocklistContradiction)[0], /excludes stocklist/i);
+  assert.deepEqual(
+    removeUnsupportedStrictTestCases(
+      requirement,
+      [
+        valid,
+        validNegativeControl,
+        validAllTypes,
+        stocklistContradiction,
+        defaultAssumption,
+        normalizationAssumption,
+      ],
+      true
+    ).map((testCase) => testCase.testCase),
+    [valid.testCase, validNegativeControl.testCase, validAllTypes.testCase]
+  );
 });

@@ -18,6 +18,9 @@ var DEFAULT_SETTINGS = {
   openrouterModel: "openrouter/auto"
 };
 var GROQ_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+var DEFAULT_OPENROUTER_MAX_TOKENS = 5e3;
+var MIN_OPENROUTER_MAX_TOKENS = 1024;
+var MAX_OPENROUTER_MAX_TOKENS = 16384;
 var PROVIDER_SECRET_ENV_NAMES = {
   claude_cli: [],
   openai: ["OPENAI_API_KEY"],
@@ -176,6 +179,7 @@ async function callOpenRouterWithFallback({
   userParts,
   output
 }) {
+  const maxTokens = getOpenRouterMaxTokens();
   try {
     return await callOpenAiCompatibleTool({
       url: "https://openrouter.ai/api/v1/chat/completions",
@@ -185,7 +189,8 @@ async function callOpenRouterWithFallback({
       userParts,
       output,
       providerLabel: "OpenRouter",
-      extraHeaders: getOpenRouterHeaders()
+      extraHeaders: getOpenRouterHeaders(),
+      maxTokens
     });
   } catch (error) {
     if (!shouldRetryOpenRouterWithAuto(model, error)) {
@@ -199,7 +204,8 @@ async function callOpenRouterWithFallback({
       userParts,
       output,
       providerLabel: "OpenRouter",
-      extraHeaders: getOpenRouterHeaders()
+      extraHeaders: getOpenRouterHeaders(),
+      maxTokens
     });
   }
 }
@@ -211,7 +217,8 @@ async function callOpenAiCompatibleTool({
   userParts,
   output,
   providerLabel = "OpenAI-compatible AI provider",
-  extraHeaders = {}
+  extraHeaders = {},
+  maxTokens
 }) {
   const response = await fetch(url, {
     method: "POST",
@@ -223,6 +230,7 @@ async function callOpenAiCompatibleTool({
     body: JSON.stringify({
       model,
       temperature: 0,
+      ...typeof maxTokens === "number" ? { max_tokens: maxTokens } : {},
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: toOpenAiContent(userParts) }
@@ -550,6 +558,16 @@ function getOpenRouterHeaders() {
     headers["X-OpenRouter-Title"] = title;
   }
   return headers;
+}
+function getOpenRouterMaxTokens() {
+  const configuredValue = Number(getRuntimeEnv("OPENROUTER_MAX_TOKENS"));
+  if (!Number.isFinite(configuredValue)) {
+    return DEFAULT_OPENROUTER_MAX_TOKENS;
+  }
+  return Math.max(
+    MIN_OPENROUTER_MAX_TOKENS,
+    Math.min(MAX_OPENROUTER_MAX_TOKENS, Math.floor(configuredValue))
+  );
 }
 
 // supabase/functions/_shared/generationMode.ts
@@ -1283,10 +1301,6 @@ function buildTechnicalCoverageExpectations(input) {
       {
         label: "malformed structured-data handling",
         evidenceTerms: ["malformed json", "malformed additional", "invalid json", "malformed data"]
-      },
-      {
-        label: "casing and whitespace behavior for exact exemptions",
-        evidenceTerms: ["casing", "case-sensitive", "case insensitive", "case-insensitive", "whitespace"]
       }
     );
   }
@@ -1383,11 +1397,6 @@ var TECHNICAL_GAP_SCENARIOS = {
     priority: "High",
     type: "Negative"
   },
-  "casing and whitespace behavior for exact exemptions": {
-    scenario: "Verify the documented casing and surrounding-whitespace behavior for exact exemption or origin values, recording a clarification when normalization is unspecified.",
-    priority: "Medium",
-    type: "Negative"
-  },
   "non-interference with existing related records": {
     scenario: "Verify the new persisted side effect does not modify, delete, duplicate, or reset unrelated existing records or columns.",
     priority: "High",
@@ -1421,6 +1430,24 @@ var TECHNICAL_GAP_SCENARIOS = {
 };
 function buildMissingTechnicalScenarios(input, suiteText) {
   return findMissingTechnicalWorkflowCoverage(input, suiteText).map((label) => TECHNICAL_GAP_SCENARIOS[label]).filter((scenario) => Boolean(scenario));
+}
+function buildTechnicalWorkflowRecommendations(input, suiteText) {
+  const signals = detectTechnicalWorkflowSignals(input);
+  const normalizedInput = input.toLowerCase();
+  const normalizedSuite = suiteText.toLowerCase();
+  const hasExactExemption = signals.structuredInput && includesAny(normalizedInput, [
+    "exemption",
+    "customerorigin",
+    "customer origin"
+  ]);
+  const hasNormalizationEvidence = includesAny(normalizedSuite, [
+    "casing",
+    "case-sensitive",
+    "case insensitive",
+    "case-insensitive",
+    "whitespace"
+  ]);
+  return hasExactExemption && !hasNormalizationEvidence ? ["Clarification: Confirm whether exact exemption/origin values are case-sensitive and whitespace-sensitive or normalized before comparison."] : [];
 }
 
 // supabase/functions/_shared/requirementAnalysis.ts
@@ -2532,11 +2559,63 @@ function removeUnsupportedStrictTestCases(input, testCases, strictRequirementMod
   );
   const filtered = testCases.filter((testCase) => {
     const lowerTestCase = JSON.stringify(testCase).toLowerCase();
-    return !unsupportedTopics.some(
+    const hasUnsupportedTopic = unsupportedTopics.some(
       (topic) => topic.generated.some((term) => containsStrictTopicTerm(lowerTestCase, term))
     );
+    return !hasUnsupportedTopic && findStrictRequirementContradictions(input, testCase).length === 0;
   });
   return deduplicateGeneratedTestCases(filtered);
+}
+function escapeRegularExpression(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function extractNoRestrictionTerms(input) {
+  const terms = /* @__PURE__ */ new Set();
+  const patterns = [
+    /\bno\s+(?:restriction|restrictions|limitation|limitations)\s+(?:to|on|for)\s+([a-z0-9_.-]+)/gi,
+    /\bno\s+([a-z0-9_.-]+)\s+(?:restriction|restrictions|limitation|limitations)\b/gi,
+    /\bnot\s+restricted\s+(?:to|by)\s+([a-z0-9_.-]+)/gi
+  ];
+  for (const pattern of patterns) {
+    for (const match of input.matchAll(pattern)) {
+      if (match[1]?.length >= 2) terms.add(match[1].toLowerCase());
+    }
+  }
+  return [...terms];
+}
+function findStrictRequirementContradictions(input, testCase) {
+  const contradictions = [];
+  const lowerInput = input.toLowerCase();
+  const testCaseIntent = [testCase.scenario, testCase.testCase, testCase.expectedResult].filter(Boolean).join("\n").toLowerCase();
+  if (/\b(?:assume|assumes|assuming|assumption)\b/.test(testCaseIntent) && !/\b(?:assume|assumes|assuming|assumption)\b/.test(lowerInput)) {
+    contradictions.push("contains an unsupported assumption");
+  }
+  const generatedNormalizationBehavior = /\b(?:casing|case[- ]sensitive|case[- ]insensitive|whitespace|leading\/trailing|leading or trailing)\b/.test(testCaseIntent);
+  const requiredNormalizationBehavior = /\b(?:casing|case[- ]sensitive|case[- ]insensitive|whitespace|normalize|normalise|leading\/trailing|leading or trailing)\b/.test(lowerInput);
+  if (generatedNormalizationBehavior && !requiredNormalizationBehavior) {
+    contradictions.push("invents casing or whitespace normalization behavior");
+  }
+  for (const term of extractNoRestrictionTerms(input)) {
+    const escapedTerm = escapeRegularExpression(term);
+    const clauses = testCaseIntent.split(/[.!?\n]+/).filter(
+      (clause) => new RegExp(`\\b${escapedTerm}\\b`, "i").test(clause)
+    );
+    const explicitlyExcludesTerm = clauses.some((clause) => {
+      const protectsTerm = new RegExp(
+        `(?:does|do|must|should|will)\\s+not\\s+(?:exclude|block|reject|ignore)[^.!?]{0,80}\\b${escapedTerm}\\b|\\b${escapedTerm}\\b[^.!?]{0,80}(?:must|should|will)\\s+not\\s+be\\s+(?:excluded|blocked|rejected|ignored)`,
+        "i"
+      ).test(clause);
+      if (protectsTerm) return false;
+      return new RegExp(
+        `\\b${escapedTerm}\\b[^.!?]{0,100}\\b(?:is|are|remains?|must\\s+be|should\\s+be)\\s+(?:excluded|ineligible|blocked|rejected|unsupported|ignored)\\b|\\bexclude(?:s|d|ing)?\\s+(?:the\\s+)?(?:order\\s+type\\s+)?${escapedTerm}\\b|\\bonly\\s+non[-\\s]?${escapedTerm}\\b`,
+        "i"
+      ).test(clause);
+    });
+    if (explicitlyExcludesTerm) {
+      contradictions.push(`excludes ${term} even though the requirement states no such restriction`);
+    }
+  }
+  return contradictions;
 }
 function buildInsightSummary(insights) {
   if (!insights) return "";
@@ -2998,6 +3077,7 @@ var COVERAGE_STOP_WORDS = /* @__PURE__ */ new Set([
   "which",
   "with"
 ]);
+var GENERIC_TECHNICAL_ANCHORS = /* @__PURE__ */ new Set(["api", "db", "id", "qa", "tc", "ui"]);
 function cleanClause(value) {
   return value.replace(BULLET_PREFIX, "").replace(/^acceptance criteria\s*:\s*/i, "").replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
 }
@@ -3017,10 +3097,48 @@ function significantTokens(value) {
     value.toLowerCase().replace(/[^a-z0-9_]+/g, " ").split(/\s+/).filter((token) => token.length > 1 && !COVERAGE_STOP_WORDS.has(token)).map(normalizeToken)
   );
 }
+function distinctiveRequirementAnchors(value) {
+  const anchors = /* @__PURE__ */ new Set();
+  const patterns = [
+    /\b[A-Z][A-Z0-9_]{1,}\b/g,
+    /\b[a-z]+(?:[A-Z][a-zA-Z0-9]*)+\b/g,
+    /\b[A-Za-z0-9]+_[A-Za-z0-9_]+\b/g,
+    /\b\d+(?:\.\d+)?(?:\s*(?:milliseconds?|ms|seconds?|secs?|minutes?|mins?|hours?|days?|%))?\b/gi
+  ];
+  for (const pattern of patterns) {
+    for (const match of value.matchAll(pattern)) {
+      const anchor = match[0].toLowerCase().replace(/\s+/g, " ").trim();
+      if (!GENERIC_TECHNICAL_ANCHORS.has(anchor)) anchors.add(anchor);
+    }
+  }
+  for (const match of value.matchAll(/["'`]([^"'`]{2,80})["'`]/g)) {
+    const anchor = match[1].toLowerCase().replace(/\s+/g, " ").trim();
+    if (anchor.split(/\s+/).length <= 6) anchors.add(anchor);
+  }
+  return [...anchors];
+}
+function rowContainsAnchor(row, anchor) {
+  const normalizedRow = row.toLowerCase().replace(/\s+/g, " ");
+  const escapedAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^a-z0-9_])${escapedAnchor}(?:$|[^a-z0-9_])`, "i").test(normalizedRow);
+}
 function clauseIsCovered(clause, suiteRows) {
   const clauseTokens = significantTokens(clause);
   const requiresNegativeEvidence = NEGATIVE_SIGNAL.test(clause);
   if (clauseTokens.size === 0) return true;
+  const anchors = distinctiveRequirementAnchors(clause);
+  const anchorsCovered = anchors.every(
+    (anchor) => suiteRows.some((row) => {
+      if (!rowContainsAnchor(row, anchor)) return false;
+      const rowTokens = significantTokens(row);
+      let contextualOverlap = 0;
+      for (const token of clauseTokens) {
+        if (rowTokens.has(token)) contextualOverlap += 1;
+      }
+      return contextualOverlap >= Math.min(2, clauseTokens.size);
+    })
+  );
+  if (!anchorsCovered) return false;
   return suiteRows.some((row) => {
     if (requiresNegativeEvidence && !NEGATIVE_SIGNAL.test(row)) return false;
     const rowTokens = significantTokens(row);
@@ -3669,8 +3787,8 @@ var HOST = process.env.LOCAL_AI_SERVER_HOST || "127.0.0.1";
 var PORT = Number(process.env.LOCAL_AI_SERVER_PORT || 8787);
 var MAX_BODY_BYTES = 20 * 1024 * 1024;
 var CACHE_TTL_MS2 = 5 * 60 * 1e3;
-var AUDIT_CACHE_VERSION = "audit-test-cases-2026-08-10-v2";
-var COVERAGE_CACHE_VERSION = "validate-coverage-2026-08-10-v3";
+var AUDIT_CACHE_VERSION = "audit-test-cases-2026-08-10-v3";
+var COVERAGE_CACHE_VERSION = "validate-coverage-2026-08-10-v4";
 var GENERATION_TIME_BUDGET_MS = 20 * 60 * 1e3;
 var RETRY_STAGE_RESERVE_MS = 3 * 60 * 1e3;
 var FUNCTION_ROUTE_PREFIX = "/functions/v1";
@@ -3947,11 +4065,8 @@ async function handleAuditTestCases(body) {
       return cached;
     }
   }
-  const requirementInsights = await analyzeRequirementForArtifact(
-    aiSettings,
-    requirement,
-    "audit-test-cases-analysis"
-  );
+  const focusedCoverageRepair = requestedCoverageGaps.length > 0 || requestedCoverageRecommendations.length > 0;
+  const requirementInsights = focusedCoverageRepair ? null : await analyzeRequirementForArtifact(aiSettings, requirement, "audit-test-cases-analysis");
   const systemPrompt = `You are a senior QA lead auditing an existing testcase suite.
 
 Your job:
@@ -4048,7 +4163,11 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join("\n")}`;
     ],
     correctionReminder: "Return only materially useful new cases that close real coverage gaps or implement testable recommendations and read like an enterprise-ready senior-QA enhancement set."
   });
-  const normalized = deduplicateGeneratedTestCases(normalizeGeneratedTestCases(parsed.testCases || []));
+  const normalized = removeUnsupportedStrictTestCases(
+    requirement,
+    deduplicateGeneratedTestCases(normalizeGeneratedTestCases(parsed.testCases || [])),
+    isStrictRequirementMode(aiSettings) || generationMode === "rob_style"
+  );
   const responseBody = { testCases: normalized };
   if (cacheKey) {
     setCachedRequest(cacheKey, responseBody);
@@ -4139,34 +4258,43 @@ ${generationProfile.mergePromptLines.map((line) => `- ${line}`).join("\n")}`;
 }
 var COVERAGE_GAP_STOP_WORDS = /* @__PURE__ */ new Set([
   "a",
+  "add",
   "an",
   "and",
   "are",
   "as",
   "at",
   "be",
+  "behavior",
   "by",
+  "check",
+  "confirm",
+  "coverage",
+  "ensure",
   "for",
   "from",
+  "handling",
   "in",
   "is",
   "it",
   "of",
   "on",
   "or",
+  "scenario",
+  "test",
+  "testing",
   "that",
   "the",
   "their",
   "this",
   "to",
   "under",
+  "validate",
+  "validates",
+  "verify",
   "when",
   "with",
-  "without",
-  "verify",
-  "validates",
-  "validate",
-  "ensure"
+  "without"
 ]);
 function coverageGapTokens(value) {
   return new Set(
@@ -4182,17 +4310,24 @@ function coverageGapsOverlap(left, right) {
   for (const token of leftTokens) {
     if (rightTokens.has(token)) overlap += 1;
   }
-  return overlap >= 2 && overlap / smallerSize >= 0.45;
+  const unionSize = (/* @__PURE__ */ new Set([...leftTokens, ...rightTokens])).size;
+  return overlap >= 2 && overlap / smallerSize >= 0.9 && overlap / unionSize >= 0.8;
 }
 function enforceCoverageBackstops(input, inputType, testCases, result) {
-  const aiReportedScenarios = [...result.missingScenarios];
+  const nonExecutableAiScenarios = result.missingScenarios.filter(
+    (item) => isNonTestableCoverageInstruction(item.scenario)
+  );
+  const aiReportedScenarios = result.missingScenarios.filter(
+    (item) => !isNonTestableCoverageInstruction(item.scenario)
+  );
   const missingScenarios = [...aiReportedScenarios];
   const explicitRequirementScenarios = inputType === "requirement" ? buildMissingExplicitRequirementScenarios(input, testCases) : [];
   const requiredTechnicalScenarios = buildMissingTechnicalScenarios(input, JSON.stringify(testCases));
+  const technicalRecommendations = buildTechnicalWorkflowRecommendations(input, JSON.stringify(testCases));
   let enforcedExplicitGapCount = 0;
   let enforcedTechnicalGapCount = 0;
   for (const requiredScenario of explicitRequirementScenarios) {
-    const alreadyReported = aiReportedScenarios.some(
+    const alreadyReported = missingScenarios.some(
       (existing) => coverageGapsOverlap(existing.scenario, requiredScenario.scenario)
     );
     if (!alreadyReported) {
@@ -4201,7 +4336,7 @@ function enforceCoverageBackstops(input, inputType, testCases, result) {
     }
   }
   for (const requiredScenario of requiredTechnicalScenarios) {
-    const alreadyReported = aiReportedScenarios.some(
+    const alreadyReported = missingScenarios.some(
       (existing) => coverageGapsOverlap(existing.scenario, requiredScenario.scenario)
     );
     if (!alreadyReported) {
@@ -4214,12 +4349,39 @@ function enforceCoverageBackstops(input, inputType, testCases, result) {
   const coverageScore = Math.min(reportedScore, scoreCap);
   const enforcedGapCount = enforcedExplicitGapCount + enforcedTechnicalGapCount;
   const summary = enforcedGapCount > 0 ? `${result.summary} Independent rule checks added ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? "" : "s"} that the AI review did not report.` : result.summary;
+  const recommendations = deduplicateCoverageRecommendations(
+    [
+      ...result.recommendations,
+      ...nonExecutableAiScenarios.map((item) => item.scenario),
+      ...technicalRecommendations
+    ],
+    missingScenarios
+  );
   return {
     ...result,
     coverageScore,
     summary,
-    missingScenarios
+    missingScenarios,
+    recommendations
   };
+}
+function isNonTestableCoverageInstruction(value) {
+  return /^\s*(?:clarification|process)\s*:/i.test(value);
+}
+function deduplicateCoverageRecommendations(recommendations, missingScenarios) {
+  const unique = [];
+  for (const recommendation of recommendations) {
+    const nonTestable = isNonTestableCoverageInstruction(recommendation);
+    if (unique.some(
+      (existing) => isNonTestableCoverageInstruction(existing) === nonTestable && coverageGapsOverlap(existing, recommendation)
+    ) || !nonTestable && missingScenarios.some(
+      (missing) => coverageGapsOverlap(missing.scenario, recommendation)
+    )) {
+      continue;
+    }
+    unique.push(recommendation);
+  }
+  return unique;
 }
 async function handleValidateCoverage(body) {
   const input = typeof body.input === "string" ? body.input : "";

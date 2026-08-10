@@ -30,6 +30,8 @@ const COVERAGE_STOP_WORDS = new Set([
   'then', 'this', 'to', 'user', 'users', 'using', 'when', 'where', 'which', 'with',
 ]);
 
+const GENERIC_TECHNICAL_ANCHORS = new Set(['api', 'db', 'id', 'qa', 'tc', 'ui']);
+
 function cleanClause(value: string) {
   return value
     .replace(BULLET_PREFIX, '')
@@ -63,10 +65,55 @@ function significantTokens(value: string) {
   );
 }
 
+function distinctiveRequirementAnchors(value: string) {
+  const anchors = new Set<string>();
+  const patterns = [
+    /\b[A-Z][A-Z0-9_]{1,}\b/g,
+    /\b[a-z]+(?:[A-Z][a-zA-Z0-9]*)+\b/g,
+    /\b[A-Za-z0-9]+_[A-Za-z0-9_]+\b/g,
+    /\b\d+(?:\.\d+)?(?:\s*(?:milliseconds?|ms|seconds?|secs?|minutes?|mins?|hours?|days?|%))?\b/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of value.matchAll(pattern)) {
+      const anchor = match[0].toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!GENERIC_TECHNICAL_ANCHORS.has(anchor)) anchors.add(anchor);
+    }
+  }
+
+  for (const match of value.matchAll(/["'`]([^"'`]{2,80})["'`]/g)) {
+    const anchor = match[1].toLowerCase().replace(/\s+/g, ' ').trim();
+    if (anchor.split(/\s+/).length <= 6) anchors.add(anchor);
+  }
+
+  return [...anchors];
+}
+
+function rowContainsAnchor(row: string, anchor: string) {
+  const normalizedRow = row.toLowerCase().replace(/\s+/g, ' ');
+  const escapedAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9_])${escapedAnchor}(?:$|[^a-z0-9_])`, 'i').test(normalizedRow);
+}
+
 function clauseIsCovered(clause: string, suiteRows: string[]) {
   const clauseTokens = significantTokens(clause);
   const requiresNegativeEvidence = NEGATIVE_SIGNAL.test(clause);
   if (clauseTokens.size === 0) return true;
+
+  const anchors = distinctiveRequirementAnchors(clause);
+  const anchorsCovered = anchors.every((anchor) =>
+    suiteRows.some((row) => {
+      if (!rowContainsAnchor(row, anchor)) return false;
+
+      const rowTokens = significantTokens(row);
+      let contextualOverlap = 0;
+      for (const token of clauseTokens) {
+        if (rowTokens.has(token)) contextualOverlap += 1;
+      }
+      return contextualOverlap >= Math.min(2, clauseTokens.size);
+    })
+  );
+  if (!anchorsCovered) return false;
 
   return suiteRows.some((row) => {
     if (requiresNegativeEvidence && !NEGATIVE_SIGNAL.test(row)) return false;

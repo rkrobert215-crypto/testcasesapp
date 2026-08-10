@@ -8,6 +8,7 @@ const scriptDirectory = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDirectory, '..');
 const outputDirectory = path.join(projectRoot, '.tmp-tests');
 const testEntries = [
+  'tests/ai-client.test.ts',
   'tests/ai-settings.test.ts',
   'tests/claude-cli-adapter.test.ts',
   'tests/reviewed-generation.test.ts',
@@ -17,6 +18,7 @@ const testEntries = [
   'tests/vercel-handler.test.ts',
   'tests/wrangler-output.test.ts',
   'tests/image-payload-budget.test.ts',
+  'tests/provider-errors.test.ts',
   'tests/test-case-identity.test.ts',
   'tests/technical-workflow-coverage.test.ts',
   'tests/explicit-requirement-coverage.test.ts',

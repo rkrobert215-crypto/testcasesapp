@@ -4,6 +4,16 @@ export interface AiErrorPresentation {
   retryable: boolean;
 }
 
+export function getProviderRetryAfterMs(message: string) {
+  const match = message.match(/(?:please\s+)?retry\s+(?:after|in)\s+([0-9]+(?:\.[0-9]+)?)\s*(?:s|sec|secs|second|seconds)\b/i);
+  if (!match) return null;
+
+  const seconds = Number(match[1]);
+  return Number.isFinite(seconds) && seconds > 0
+    ? Math.min(Math.ceil(seconds * 1000), 120_000)
+    : null;
+}
+
 function normalizeErrorMessage(error: unknown, fallbackMessage: string) {
   const raw = error instanceof Error ? error.message : String(error ?? fallbackMessage);
   return raw.replace(/\s+/g, ' ').trim();
@@ -11,11 +21,16 @@ function normalizeErrorMessage(error: unknown, fallbackMessage: string) {
 
 export function isRetryableAiErrorMessage(message: string, status?: number) {
   const lower = message.toLowerCase();
+  const retryAfterMs = getProviderRetryAfterMs(message);
+  const hardQuotaFailure =
+    lower.includes('limit: 0') ||
+    lower.includes('insufficient_quota') ||
+    lower.includes('requires more credits');
   if (
     lower.includes('session limit') ||
     lower.includes('usage limit') ||
-    lower.includes('quota exceeded') ||
-    lower.includes('insufficient_quota')
+    hardQuotaFailure ||
+    (lower.includes('quota exceeded') && retryAfterMs === null)
   ) {
     return false;
   }
@@ -32,7 +47,7 @@ export function isRetryableAiErrorMessage(message: string, status?: number) {
     'upstream connect error',
   ];
 
-  return status === 429 || (typeof status === 'number' && status >= 500) || retryableSignals.some((signal) => lower.includes(signal));
+  return retryAfterMs !== null || status === 429 || (typeof status === 'number' && status >= 500) || retryableSignals.some((signal) => lower.includes(signal));
 }
 
 export function describeAiError(
@@ -42,6 +57,7 @@ export function describeAiError(
 ): AiErrorPresentation {
   const message = normalizeErrorMessage(error, fallbackDescription);
   const lower = message.toLowerCase();
+  const retryAfterMs = getProviderRetryAfterMs(message);
 
   if (lower.includes('session limit') || lower.includes('usage limit')) {
     return {
@@ -70,6 +86,18 @@ export function describeAiError(
       title: 'API key issue',
       description: 'The selected provider key is missing or was rejected. Check AI Settings or your local env file and try again.',
       retryable: false,
+    };
+  }
+
+  if (
+    retryAfterMs !== null &&
+    !lower.includes('limit: 0') &&
+    !lower.includes('requires more credits')
+  ) {
+    return {
+      title: 'Rate limit reached',
+      description: `The provider temporarily throttled this request. Retry after about ${Math.ceil(retryAfterMs / 1000)} seconds.`,
+      retryable: true,
     };
   }
 

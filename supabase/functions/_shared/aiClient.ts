@@ -70,6 +70,9 @@ const DEFAULT_SETTINGS: AiSettings = {
 };
 
 const GROQ_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+const DEFAULT_OPENROUTER_MAX_TOKENS = 5000;
+const MIN_OPENROUTER_MAX_TOKENS = 1024;
+const MAX_OPENROUTER_MAX_TOKENS = 16384;
 const PROVIDER_SECRET_ENV_NAMES: Record<AiProvider, string[]> = {
   claude_cli: [],
   openai: ['OPENAI_API_KEY'],
@@ -255,6 +258,8 @@ async function callOpenRouterWithFallback<T>({
   userParts: AiPromptPart[];
   output: StructuredOutputDefinition;
 }): Promise<T> {
+  const maxTokens = getOpenRouterMaxTokens();
+
   try {
     return await callOpenAiCompatibleTool<T>({
       url: 'https://openrouter.ai/api/v1/chat/completions',
@@ -265,6 +270,7 @@ async function callOpenRouterWithFallback<T>({
       output,
       providerLabel: 'OpenRouter',
       extraHeaders: getOpenRouterHeaders(),
+      maxTokens,
     });
   } catch (error) {
     if (!shouldRetryOpenRouterWithAuto(model, error)) {
@@ -280,6 +286,7 @@ async function callOpenRouterWithFallback<T>({
       output,
       providerLabel: 'OpenRouter',
       extraHeaders: getOpenRouterHeaders(),
+      maxTokens,
     });
   }
 }
@@ -293,6 +300,7 @@ async function callOpenAiCompatibleTool<T>({
   output,
   providerLabel = 'OpenAI-compatible AI provider',
   extraHeaders = {},
+  maxTokens,
 }: {
   url: string;
   apiKey: string;
@@ -302,6 +310,7 @@ async function callOpenAiCompatibleTool<T>({
   output: StructuredOutputDefinition;
   providerLabel?: string;
   extraHeaders?: Record<string, string>;
+  maxTokens?: number;
 }): Promise<T> {
   const response = await fetch(url, {
     method: 'POST',
@@ -313,6 +322,7 @@ async function callOpenAiCompatibleTool<T>({
     body: JSON.stringify({
       model,
       temperature: 0,
+      ...(typeof maxTokens === 'number' ? { max_tokens: maxTokens } : {}),
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: toOpenAiContent(userParts) },
@@ -753,4 +763,16 @@ function getOpenRouterHeaders() {
   }
 
   return headers;
+}
+
+function getOpenRouterMaxTokens() {
+  const configuredValue = Number(getRuntimeEnv('OPENROUTER_MAX_TOKENS'));
+  if (!Number.isFinite(configuredValue)) {
+    return DEFAULT_OPENROUTER_MAX_TOKENS;
+  }
+
+  return Math.max(
+    MIN_OPENROUTER_MAX_TOKENS,
+    Math.min(MAX_OPENROUTER_MAX_TOKENS, Math.floor(configuredValue))
+  );
 }

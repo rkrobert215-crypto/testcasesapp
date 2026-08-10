@@ -12,6 +12,7 @@ import { useAuditEnhance } from '@/hooks/useAuditEnhance';
 import { HistoryEntry, InputType, TestCase } from '@/types/testCase';
 import { getUniqueAdditionalTestCases, mergeTestCasesPreservingExisting } from '@/lib/mergeTestCases';
 import {
+  buildCoverageImprovementBatches,
   countCoverageImprovementRequests,
   selectCoverageImprovements,
 } from '@/lib/coverageQualityGate';
@@ -89,29 +90,42 @@ interface QualityGateSummary {
   detail: string;
 }
 
-const MAX_AUTOMATIC_QUALITY_PASSES = 2;
+const MAX_AUTOMATIC_QUALITY_PASSES = 3;
 
 async function requestCoverageImprovements(
   source: CoverageSourceContext,
   coverage: CoverageResult,
-  options: CoverageImprovementSelectionOptions = {}
+  options: CoverageImprovementSelectionOptions = {},
+  onBatchProgress?: (batchNumber: number, batchCount: number) => void
 ) {
   const selection = selectCoverageImprovements(coverage, options);
   if (selection.missingScenarios.length === 0 && selection.recommendations.length === 0) {
     return { ...selection, additions: [] as TestCase[] };
   }
 
-  const data = await invokeWithRetry('audit-test-cases', {
-    requirement: source.input,
-    existingTestCases: source.testCases,
-    imagesBase64: source.imagesBase64,
-    focusMissingScenarios: selection.focusMissingScenarios,
-    focusRecommendations: selection.focusRecommendations,
-  });
+  const batches = buildCoverageImprovementBatches(coverage, options);
+  let workingSuite = source.testCases;
+  const additions: TestCase[] = [];
+
+  for (const [index, batch] of batches.entries()) {
+    onBatchProgress?.(index + 1, batches.length);
+    const data = await invokeWithRetry('audit-test-cases', {
+      requirement: source.input,
+      existingTestCases: workingSuite,
+      imagesBase64: source.imagesBase64,
+      focusMissingScenarios: batch.focusMissingScenarios,
+      focusRecommendations: batch.focusRecommendations,
+    });
+    const uniqueBatchCases = getUniqueAdditionalTestCases(workingSuite, data.testCases || []);
+    if (uniqueBatchCases.length === 0) continue;
+
+    additions.push(...uniqueBatchCases);
+    workingSuite = mergeTestCasesPreservingExisting(workingSuite, uniqueBatchCases);
+  }
 
   return {
     ...selection,
-    additions: getUniqueAdditionalTestCases(source.testCases, data.testCases || []),
+    additions: getUniqueAdditionalTestCases(source.testCases, additions),
   };
 }
 
@@ -192,7 +206,12 @@ export default function Index() {
         );
         const improvements = await requestCoverageImprovements(
           { input, inputType, imagesBase64, testCases: finalSuite },
-          coverage
+          coverage,
+          {},
+          (batchNumber, batchCount) => updateGenerationStage(
+            'retrying',
+            `Quality pass ${completedPasses + 1}/${MAX_AUTOMATIC_QUALITY_PASSES}: generating focused coverage batch ${batchNumber}/${batchCount}...`
+          )
         );
         if (improvements.additions.length === 0) {
           break;
@@ -220,27 +239,34 @@ export default function Index() {
       }
 
       const remainingImprovementCount = countCoverageImprovementRequests(coverage);
+      const remainingSelection = selectCoverageImprovements(coverage);
+      const informationalNoteCount =
+        coverage.missingScenarios.length + coverage.recommendations.length - remainingImprovementCount;
       updateGenerationStage('finalizing', 'Deduplicating, sequencing, and preparing the final reviewed suite...');
 
       if (remainingImprovementCount === 0 && addedCount === 0) {
-        clearCoverageResult();
+        if (informationalNoteCount === 0) clearCoverageResult();
         setQualityGateSummary({
           status: 'passed',
-          title: 'Automatic QA gate passed',
-          detail: `Coverage checked at ${coverage.coverageScore}% with no missing scenarios or testable recommendations.`,
+          title: informationalNoteCount > 0
+            ? 'Automatic QA gate passed with clarification notes'
+            : 'Automatic QA gate passed',
+          detail: `Coverage checked at ${coverage.coverageScore}% with no missing scenarios or testable recommendations.${informationalNoteCount > 0 ? ` ${informationalNoteCount} non-testable clarification or process note${informationalNoteCount === 1 ? ' remains' : 's remain'} visible; no product behavior was fabricated.` : ''}`,
         });
       } else if (remainingImprovementCount === 0) {
-        clearCoverageResult();
+        if (informationalNoteCount === 0) clearCoverageResult();
         setQualityGateSummary({
           status: 'improved',
-          title: 'Automatic QA gate improved the suite',
-          detail: `The first review found ${initialMissingCount} gap${initialMissingCount === 1 ? '' : 's'} and ${initialRecommendationCount} recommendation${initialRecommendationCount === 1 ? '' : 's'}. ${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added and the complete suite passed revalidation.`,
+          title: informationalNoteCount > 0
+            ? 'Suite improved with clarification notes retained'
+            : 'Automatic QA gate improved the suite',
+          detail: `The first review found ${initialMissingCount} gap${initialMissingCount === 1 ? '' : 's'} and ${initialRecommendationCount} recommendation${initialRecommendationCount === 1 ? '' : 's'}. ${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added and the complete suite passed executable-gap revalidation.${informationalNoteCount > 0 ? ` ${informationalNoteCount} non-testable note${informationalNoteCount === 1 ? ' remains' : 's remain'} visible for human confirmation.` : ''}`,
         });
       } else {
         setQualityGateSummary({
           status: 'attention',
           title: 'Automatic QA review completed with remaining items',
-          detail: `${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added across ${completedPasses} quality pass${completedPasses === 1 ? '' : 'es'}, but ${coverage.missingScenarios.length} gap${coverage.missingScenarios.length === 1 ? '' : 's'} and ${coverage.recommendations.length} recommendation${coverage.recommendations.length === 1 ? '' : 's'} still need review. They remain visible below and were not silently ignored.`,
+          detail: `${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added across ${completedPasses} quality pass${completedPasses === 1 ? '' : 'es'}, but ${remainingSelection.missingScenarios.length} executable gap${remainingSelection.missingScenarios.length === 1 ? '' : 's'} and ${remainingSelection.recommendations.length} testable recommendation${remainingSelection.recommendations.length === 1 ? '' : 's'} still need review. They remain visible below and were not silently ignored.`,
         });
       }
 
@@ -370,11 +396,36 @@ export default function Index() {
         const mergedSuite = mergeTestCasesPreservingExisting(sourceContext.testCases, uniqueGapCases);
         setTestCases(mergedSuite);
         setPendingCoverageGapCases([]);
-        clearCoverageResult();
+        const refreshedCoverage = await validateCoverage(
+          sourceContext.lastInput,
+          sourceContext.lastInputType,
+          mergedSuite,
+          sourceContext.lastImagesBase64,
+          { silent: true }
+        );
+        if (!refreshedCoverage) {
+          setQualityGateSummary({
+            status: 'incomplete',
+            title: 'Coverage cases added; revalidation incomplete',
+            detail: `${addedCount} unique professional testcase${addedCount === 1 ? ' was' : 's were'} merged without changing the existing suite. Run Check Coverage again because the post-merge validation returned no result.`,
+          });
+          saveToHistory(sourceContext.lastInputType, sourceContext.lastInput, mergedSuite, {
+            inputSummary: `${sourceContext.lastInput.slice(0, 80) || 'Current suite'} - coverage added; recheck needed`,
+            imagesBase64: sourceContext.lastImagesBase64,
+          });
+          toast({
+            title: 'Coverage cases added',
+            description: `Added ${addedCount} testcase${addedCount === 1 ? '' : 's'}, but the post-merge coverage check needs to be retried.`,
+          });
+          return;
+        }
+        const remainingCount = countCoverageImprovementRequests(refreshedCoverage);
         setQualityGateSummary({
-          status: 'improved',
-          title: 'Coverage improvements added',
-          detail: `${addedCount} unique professional testcase${addedCount === 1 ? ' was' : 's were'} merged without changing the existing suite.`,
+          status: remainingCount > 0 ? 'attention' : 'improved',
+          title: remainingCount > 0
+            ? 'Coverage improvements added; review remains'
+            : 'Coverage improvements added and revalidated',
+          detail: `${addedCount} unique professional testcase${addedCount === 1 ? ' was' : 's were'} merged without changing the existing suite.${remainingCount > 0 ? ` ${remainingCount} executable coverage item${remainingCount === 1 ? ' remains' : 's remain'} visible after revalidation.` : ' The complete merged suite has no remaining executable coverage items.'}`,
         });
         saveToHistory(sourceContext.lastInputType, sourceContext.lastInput, mergedSuite, {
           inputSummary: `${sourceContext.lastInput.slice(0, 80) || 'Current suite'} - coverage improved`,
@@ -462,7 +513,7 @@ export default function Index() {
     setPendingCoverageGapCases([]);
   };
 
-  const handleMergeSelectedCoverageGapCases = (selectedIds: string[]) => {
+  const handleMergeSelectedCoverageGapCases = async (selectedIds: string[]) => {
     const selectedCases = pendingCoverageGapCases.filter((testCase) => selectedIds.includes(testCase.id));
 
     if (selectedCases.length === 0) {
@@ -486,20 +537,45 @@ export default function Index() {
     const mergedSuite = mergeTestCasesPreservingExisting(testCases, uniqueSelectedCases);
     setTestCases(mergedSuite);
     setPendingCoverageGapCases([]);
-    clearCoverageResult();
-    setQualityGateSummary({
-      status: 'improved',
-      title: 'Reviewed coverage cases added',
-      detail: `${uniqueSelectedCases.length} selected testcase${uniqueSelectedCases.length === 1 ? ' was' : 's were'} merged into the main table.`,
-    });
     saveToHistory(lastInputType, lastInput, mergedSuite, {
       inputSummary: `${lastInput.slice(0, 80) || 'Current suite'} - coverage improved`,
       imagesBase64: lastImagesBase64,
     });
-    toast({
-      title: 'Cases added',
-      description: `Added ${uniqueSelectedCases.length} reviewed testcase${uniqueSelectedCases.length > 1 ? 's' : ''} to the main table without changing existing cases.`,
-    });
+
+    setIsGeneratingCoverageImprovements(true);
+    try {
+      const refreshedCoverage = lastInput.trim() || (lastImagesBase64?.length ?? 0) > 0
+        ? await validateCoverage(lastInput, lastInputType, mergedSuite, lastImagesBase64, { silent: true })
+        : null;
+
+      if (!refreshedCoverage) {
+        setQualityGateSummary({
+          status: 'incomplete',
+          title: 'Reviewed cases added; revalidation incomplete',
+          detail: `${uniqueSelectedCases.length} selected testcase${uniqueSelectedCases.length === 1 ? ' was' : 's were'} merged into the main table. Run Check Coverage again when the original requirement context is available.`,
+        });
+        toast({
+          title: 'Cases added',
+          description: 'The selected cases were preserved, but the post-merge coverage check needs to be retried.',
+        });
+        return;
+      }
+
+      const remainingCount = countCoverageImprovementRequests(refreshedCoverage);
+      setQualityGateSummary({
+        status: remainingCount > 0 ? 'attention' : 'improved',
+        title: remainingCount > 0
+          ? 'Reviewed cases added; coverage items remain'
+          : 'Reviewed cases added and revalidated',
+        detail: `${uniqueSelectedCases.length} selected testcase${uniqueSelectedCases.length === 1 ? ' was' : 's were'} merged into the main table.${remainingCount > 0 ? ` ${remainingCount} executable coverage item${remainingCount === 1 ? ' remains' : 's remain'} visible.` : ' The merged suite has no remaining executable coverage items.'}`,
+      });
+      toast({
+        title: 'Cases added',
+        description: `Added ${uniqueSelectedCases.length} reviewed testcase${uniqueSelectedCases.length > 1 ? 's' : ''} and rechecked the complete suite.`,
+      });
+    } finally {
+      setIsGeneratingCoverageImprovements(false);
+    }
   };
 
   const handleLoadHistoryEntry = async (entry: HistoryEntry) => {

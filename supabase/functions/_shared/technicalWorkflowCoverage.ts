@@ -237,10 +237,6 @@ function buildTechnicalCoverageExpectations(input: string): CoverageExpectation[
         label: 'malformed structured-data handling',
         evidenceTerms: ['malformed json', 'malformed additional', 'invalid json', 'malformed data'],
       },
-      {
-        label: 'casing and whitespace behavior for exact exemptions',
-        evidenceTerms: ['casing', 'case-sensitive', 'case insensitive', 'case-insensitive', 'whitespace'],
-      }
     );
   }
 
@@ -345,11 +341,6 @@ const TECHNICAL_GAP_SCENARIOS: Record<string, TechnicalMissingScenario> = {
     priority: 'High',
     type: 'Negative',
   },
-  'casing and whitespace behavior for exact exemptions': {
-    scenario: 'Verify the documented casing and surrounding-whitespace behavior for exact exemption or origin values, recording a clarification when normalization is unspecified.',
-    priority: 'Medium',
-    type: 'Negative',
-  },
   'non-interference with existing related records': {
     scenario: 'Verify the new persisted side effect does not modify, delete, duplicate, or reset unrelated existing records or columns.',
     priority: 'High',
@@ -389,4 +380,26 @@ export function buildMissingTechnicalScenarios(
   return findMissingTechnicalWorkflowCoverage(input, suiteText)
     .map((label) => TECHNICAL_GAP_SCENARIOS[label])
     .filter((scenario): scenario is TechnicalMissingScenario => Boolean(scenario));
+}
+
+export function buildTechnicalWorkflowRecommendations(input: string, suiteText: string) {
+  const signals = detectTechnicalWorkflowSignals(input);
+  const normalizedInput = input.toLowerCase();
+  const normalizedSuite = suiteText.toLowerCase();
+  const hasExactExemption = signals.structuredInput && includesAny(normalizedInput, [
+    'exemption',
+    'customerorigin',
+    'customer origin',
+  ]);
+  const hasNormalizationEvidence = includesAny(normalizedSuite, [
+    'casing',
+    'case-sensitive',
+    'case insensitive',
+    'case-insensitive',
+    'whitespace',
+  ]);
+
+  return hasExactExemption && !hasNormalizationEvidence
+    ? ['Clarification: Confirm whether exact exemption/origin values are case-sensitive and whitespace-sensitive or normalized before comparison.']
+    : [];
 }

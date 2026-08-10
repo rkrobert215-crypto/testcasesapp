@@ -20,17 +20,20 @@ import {
 } from '../supabase/functions/_shared/testCaseSchema.ts';
 import {
   computeGenerateCacheKey,
+  removeUnsupportedStrictTestCases,
   runGenerateTestCasePipeline,
 } from '../supabase/functions/_shared/generateTestCasePipeline.ts';
 import {
   getGenerationMode,
   getGenerationModeProfile,
+  isStrictRequirementMode,
   type GenerationMode,
 } from '../supabase/functions/_shared/generationMode.ts';
 import { buildMissingExplicitRequirementScenarios } from '../supabase/functions/_shared/explicitRequirementCoverage.ts';
 import {
   buildMissingTechnicalScenarios,
   buildTechnicalWorkflowCoverageChecklist,
+  buildTechnicalWorkflowRecommendations,
 } from '../supabase/functions/_shared/technicalWorkflowCoverage.ts';
 import { formatRequirementInsights } from '../supabase/functions/_shared/qaPlanningContext.ts';
 import {
@@ -50,8 +53,8 @@ const MAX_BODY_BYTES = 20 * 1024 * 1024;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_SIZE = 50;
 const PROMPT_VERSION = 'qa-pro-node-v2';
-const AUDIT_CACHE_VERSION = 'audit-test-cases-2026-08-10-v2';
-const COVERAGE_CACHE_VERSION = 'validate-coverage-2026-08-10-v3';
+const AUDIT_CACHE_VERSION = 'audit-test-cases-2026-08-10-v3';
+const COVERAGE_CACHE_VERSION = 'validate-coverage-2026-08-10-v4';
 const GENERATION_TIME_BUDGET_MS = 20 * 60 * 1000;
 const RETRY_STAGE_RESERVE_MS = 3 * 60 * 1000;
 const FINALIZATION_RESERVE_MS = 60_000;
@@ -1089,11 +1092,10 @@ async function handleAuditTestCases(body: Record<string, unknown>) {
     }
   }
 
-  const requirementInsights = await analyzeRequirementForArtifact(
-    aiSettings,
-    requirement,
-    'audit-test-cases-analysis'
-  );
+  const focusedCoverageRepair = requestedCoverageGaps.length > 0 || requestedCoverageRecommendations.length > 0;
+  const requirementInsights = focusedCoverageRepair
+    ? null
+    : await analyzeRequirementForArtifact(aiSettings, requirement, 'audit-test-cases-analysis');
 
   const systemPrompt = `You are a senior QA lead auditing an existing testcase suite.
 
@@ -1210,7 +1212,11 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
       'Return only materially useful new cases that close real coverage gaps or implement testable recommendations and read like an enterprise-ready senior-QA enhancement set.',
   });
 
-  const normalized = deduplicateGeneratedTestCases(normalizeGeneratedTestCases(parsed.testCases || []));
+  const normalized = removeUnsupportedStrictTestCases(
+    requirement,
+    deduplicateGeneratedTestCases(normalizeGeneratedTestCases(parsed.testCases || [])),
+    isStrictRequirementMode(aiSettings) || generationMode === 'rob_style'
+  );
   const responseBody = { testCases: normalized };
   if (cacheKey) {
     setCachedRequest(cacheKey, responseBody);
@@ -1327,9 +1333,10 @@ interface CoverageAnalysisResult {
 }
 
 const COVERAGE_GAP_STOP_WORDS = new Set([
-  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'is', 'it',
-  'of', 'on', 'or', 'that', 'the', 'their', 'this', 'to', 'under', 'when', 'with',
-  'without', 'verify', 'validates', 'validate', 'ensure',
+  'a', 'add', 'an', 'and', 'are', 'as', 'at', 'be', 'behavior', 'by', 'check',
+  'confirm', 'coverage', 'ensure', 'for', 'from', 'handling', 'in', 'is', 'it', 'of',
+  'on', 'or', 'scenario', 'test', 'testing', 'that', 'the', 'their', 'this', 'to',
+  'under', 'validate', 'validates', 'verify', 'when', 'with', 'without',
 ]);
 
 function coverageGapTokens(value: string) {
@@ -1354,7 +1361,8 @@ function coverageGapsOverlap(left: string, right: string) {
     if (rightTokens.has(token)) overlap += 1;
   }
 
-  return overlap >= 2 && overlap / smallerSize >= 0.45;
+  const unionSize = new Set([...leftTokens, ...rightTokens]).size;
+  return overlap >= 2 && overlap / smallerSize >= 0.9 && overlap / unionSize >= 0.8;
 }
 
 function enforceCoverageBackstops(
@@ -1363,17 +1371,23 @@ function enforceCoverageBackstops(
   testCases: unknown[],
   result: CoverageAnalysisResult
 ): CoverageAnalysisResult {
-  const aiReportedScenarios = [...result.missingScenarios];
+  const nonExecutableAiScenarios = result.missingScenarios.filter((item) =>
+    isNonTestableCoverageInstruction(item.scenario)
+  );
+  const aiReportedScenarios = result.missingScenarios.filter((item) =>
+    !isNonTestableCoverageInstruction(item.scenario)
+  );
   const missingScenarios = [...aiReportedScenarios];
   const explicitRequirementScenarios = inputType === 'requirement'
     ? buildMissingExplicitRequirementScenarios(input, testCases)
     : [];
   const requiredTechnicalScenarios = buildMissingTechnicalScenarios(input, JSON.stringify(testCases));
+  const technicalRecommendations = buildTechnicalWorkflowRecommendations(input, JSON.stringify(testCases));
   let enforcedExplicitGapCount = 0;
   let enforcedTechnicalGapCount = 0;
 
   for (const requiredScenario of explicitRequirementScenarios) {
-    const alreadyReported = aiReportedScenarios.some((existing) =>
+    const alreadyReported = missingScenarios.some((existing) =>
       coverageGapsOverlap(existing.scenario, requiredScenario.scenario)
     );
     if (!alreadyReported) {
@@ -1383,7 +1397,7 @@ function enforceCoverageBackstops(
   }
 
   for (const requiredScenario of requiredTechnicalScenarios) {
-    const alreadyReported = aiReportedScenarios.some((existing) =>
+    const alreadyReported = missingScenarios.some((existing) =>
       coverageGapsOverlap(existing.scenario, requiredScenario.scenario)
     );
     if (!alreadyReported) {
@@ -1401,13 +1415,51 @@ function enforceCoverageBackstops(
   const summary = enforcedGapCount > 0
     ? `${result.summary} Independent rule checks added ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? '' : 's'} that the AI review did not report.`
     : result.summary;
+  const recommendations = deduplicateCoverageRecommendations(
+    [
+      ...result.recommendations,
+      ...nonExecutableAiScenarios.map((item) => item.scenario),
+      ...technicalRecommendations,
+    ],
+    missingScenarios
+  );
 
   return {
     ...result,
     coverageScore,
     summary,
     missingScenarios,
+    recommendations,
   };
+}
+
+function isNonTestableCoverageInstruction(value: string) {
+  return /^\s*(?:clarification|process)\s*:/i.test(value);
+}
+
+function deduplicateCoverageRecommendations(
+  recommendations: string[],
+  missingScenarios: CoverageMissingScenario[]
+) {
+  const unique: string[] = [];
+
+  for (const recommendation of recommendations) {
+    const nonTestable = isNonTestableCoverageInstruction(recommendation);
+    if (
+      unique.some((existing) =>
+        isNonTestableCoverageInstruction(existing) === nonTestable &&
+        coverageGapsOverlap(existing, recommendation)
+      ) ||
+      (!nonTestable && missingScenarios.some((missing) =>
+        coverageGapsOverlap(missing.scenario, recommendation)
+      ))
+    ) {
+      continue;
+    }
+    unique.push(recommendation);
+  }
+
+  return unique;
 }
 
 async function handleValidateCoverage(body: Record<string, unknown>) {

@@ -979,12 +979,88 @@ export function removeUnsupportedStrictTestCases(
   );
   const filtered = testCases.filter((testCase) => {
     const lowerTestCase = JSON.stringify(testCase).toLowerCase();
-    return !unsupportedTopics.some((topic) =>
+    const hasUnsupportedTopic = unsupportedTopics.some((topic) =>
       topic.generated.some((term) => containsStrictTopicTerm(lowerTestCase, term))
     );
+    return !hasUnsupportedTopic && findStrictRequirementContradictions(input, testCase).length === 0;
   });
 
   return deduplicateGeneratedTestCases(filtered);
+}
+
+function escapeRegularExpression(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function extractNoRestrictionTerms(input: string) {
+  const terms = new Set<string>();
+  const patterns = [
+    /\bno\s+(?:restriction|restrictions|limitation|limitations)\s+(?:to|on|for)\s+([a-z0-9_.-]+)/gi,
+    /\bno\s+([a-z0-9_.-]+)\s+(?:restriction|restrictions|limitation|limitations)\b/gi,
+    /\bnot\s+restricted\s+(?:to|by)\s+([a-z0-9_.-]+)/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of input.matchAll(pattern)) {
+      if (match[1]?.length >= 2) terms.add(match[1].toLowerCase());
+    }
+  }
+
+  return [...terms];
+}
+
+export function findStrictRequirementContradictions(
+  input: string,
+  testCase: GeneratedTestCase
+) {
+  const contradictions: string[] = [];
+  const lowerInput = input.toLowerCase();
+  // Judge asserted behavior only. Preconditions, test data, and steps often name
+  // negative controls that must not be mistaken for the testcase's conclusion.
+  const testCaseIntent = [testCase.scenario, testCase.testCase, testCase.expectedResult]
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase();
+
+  if (
+    /\b(?:assume|assumes|assuming|assumption)\b/.test(testCaseIntent) &&
+    !/\b(?:assume|assumes|assuming|assumption)\b/.test(lowerInput)
+  ) {
+    contradictions.push('contains an unsupported assumption');
+  }
+
+  const generatedNormalizationBehavior =
+    /\b(?:casing|case[- ]sensitive|case[- ]insensitive|whitespace|leading\/trailing|leading or trailing)\b/.test(testCaseIntent);
+  const requiredNormalizationBehavior =
+    /\b(?:casing|case[- ]sensitive|case[- ]insensitive|whitespace|normalize|normalise|leading\/trailing|leading or trailing)\b/.test(lowerInput);
+  if (generatedNormalizationBehavior && !requiredNormalizationBehavior) {
+    contradictions.push('invents casing or whitespace normalization behavior');
+  }
+
+  for (const term of extractNoRestrictionTerms(input)) {
+    const escapedTerm = escapeRegularExpression(term);
+    const clauses = testCaseIntent.split(/[.!?\n]+/).filter((clause) =>
+      new RegExp(`\\b${escapedTerm}\\b`, 'i').test(clause)
+    );
+    const explicitlyExcludesTerm = clauses.some((clause) => {
+      const protectsTerm = new RegExp(
+        `(?:does|do|must|should|will)\\s+not\\s+(?:exclude|block|reject|ignore)[^.!?]{0,80}\\b${escapedTerm}\\b|\\b${escapedTerm}\\b[^.!?]{0,80}(?:must|should|will)\\s+not\\s+be\\s+(?:excluded|blocked|rejected|ignored)`,
+        'i'
+      ).test(clause);
+      if (protectsTerm) return false;
+
+      return new RegExp(
+        `\\b${escapedTerm}\\b[^.!?]{0,100}\\b(?:is|are|remains?|must\\s+be|should\\s+be)\\s+(?:excluded|ineligible|blocked|rejected|unsupported|ignored)\\b|\\bexclude(?:s|d|ing)?\\s+(?:the\\s+)?(?:order\\s+type\\s+)?${escapedTerm}\\b|\\bonly\\s+non[-\\s]?${escapedTerm}\\b`,
+        'i'
+      ).test(clause);
+    });
+
+    if (explicitlyExcludesTerm) {
+      contradictions.push(`excludes ${term} even though the requirement states no such restriction`);
+    }
+  }
+
+  return contradictions;
 }
 
 function buildInsightSummary(insights: RequirementAnalysisResult | null) {

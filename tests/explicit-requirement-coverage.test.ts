@@ -66,3 +66,52 @@ test('explicit requirement extraction handles prose requirements without bullet 
     'The system sends a verification email after registration',
   ]);
 });
+
+test('explicit requirement backstop requires every exact status anchor across the suite', () => {
+  const requirement = 'After an order status transitions to SHIPPED/INVOICED, a POE row must be created.';
+  const shippedOnly = [{
+    testCase: 'Verify that a POE row is created after an order status transitions to SHIPPED',
+    expectedResult: 'The POE row is created for the SHIPPED transition.',
+  }];
+  const bothStatuses = [
+    ...shippedOnly,
+    {
+      testCase: 'Verify that a POE row is created after an order status transitions to INVOICED',
+      expectedResult: 'The POE row is created for the INVOICED transition.',
+    },
+  ];
+
+  assert.equal(buildMissingExplicitRequirementScenarios(requirement, shippedOnly).length, 1);
+  assert.deepEqual(buildMissingExplicitRequirementScenarios(requirement, bothStatuses), []);
+});
+
+test('explicit requirement backstop preserves exact numeric boundaries', () => {
+  const requirement = 'The account must lock after 5 failed login attempts.';
+  const wrongBoundary = [{
+    testCase: 'Verify that the account locks after repeated failed login attempts',
+    expectedResult: 'The account is locked after 3 failures.',
+  }];
+  const exactBoundary = [{
+    testCase: 'Verify that the account locks after 5 failed login attempts',
+    expectedResult: 'The account is locked immediately after the fifth failure.',
+  }];
+
+  assert.equal(buildMissingExplicitRequirementScenarios(requirement, wrongBoundary).length, 1);
+  assert.deepEqual(buildMissingExplicitRequirementScenarios(requirement, exactBoundary), []);
+});
+
+test('an exact value in an unrelated testcase cannot satisfy a requirement boundary', () => {
+  const requirement = 'The account must lock after 5 failed login attempts.';
+  const unrelatedFive = [
+    {
+      testCase: 'Verify that the account locks after repeated failed login attempts',
+      expectedResult: 'The account is locked after the configured threshold.',
+    },
+    {
+      testCase: 'Verify that the dashboard displays 5 recent notifications',
+      expectedResult: 'Exactly 5 notification rows are visible.',
+    },
+  ];
+
+  assert.equal(buildMissingExplicitRequirementScenarios(requirement, unrelatedFive).length, 1);
+});

@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildMissingTechnicalScenarios,
   buildTechnicalWorkflowCoverageChecklist,
+  buildTechnicalWorkflowRecommendations,
   detectTechnicalWorkflowSignals,
   findMissingTechnicalWorkflowCoverage,
 } from '../supabase/functions/_shared/technicalWorkflowCoverage.ts';
@@ -74,7 +75,6 @@ test('technical coverage audit identifies every important gap in a weak POE suit
     'cross-tenant identifier safety',
     'NULL or missing source-data handling',
     'malformed structured-data handling',
-    'casing and whitespace behavior for exact exemptions',
     'non-interference with existing related records',
     'non-qualifying main-flow regression protection',
     'side-effect failure isolation from the main flow',
@@ -86,6 +86,14 @@ test('technical coverage audit identifies every important gap in a weak POE suit
   assert.equal(enforcedScenarios.length, gaps.length);
   assert.match(enforcedScenarios[0].scenario, /every stated event\/status trigger/i);
   assert.ok(enforcedScenarios.every((scenario) => scenario.priority && scenario.type));
+});
+
+test('unspecified exemption normalization is retained as a clarification, not an executable gap', () => {
+  const recommendations = buildTechnicalWorkflowRecommendations(POE_REQUIREMENT, 'No normalization coverage exists.');
+
+  assert.equal(recommendations.length, 1);
+  assert.match(recommendations[0], /^Clarification:/);
+  assert.doesNotMatch(findMissingTechnicalWorkflowCoverage(POE_REQUIREMENT, '').join('\n'), /casing/i);
 });
 
 test('technical coverage audit accepts a suite containing all strengthened POE checks', () => {

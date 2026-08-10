@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { CoverageResult, MissingScenario } from '@/hooks/useCoverageValidator';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
+import { countCoverageImprovementRequests, isTestableCoverageInstruction } from '@/lib/coverageQualityGate';
 
 interface CoverageReportProps {
   result: CoverageResult;
@@ -38,7 +39,8 @@ export function CoverageReport({
   onAddAllImprovements,
   isGeneratingImprovements = false,
 }: CoverageReportProps) {
-  const hasImprovements = result.missingScenarios.length > 0 || result.recommendations.length > 0;
+  const hasFindings = result.missingScenarios.length > 0 || result.recommendations.length > 0;
+  const hasImprovements = countCoverageImprovementRequests(result) > 0;
   const getScoreIcon = () => {
     if (result.coverageScore >= 90) return <CheckCircle className="h-8 w-8 text-positive" />;
     if (result.coverageScore >= 70) return <AlertTriangle className="h-8 w-8 text-edge" />;
@@ -83,7 +85,7 @@ export function CoverageReport({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {hasImprovements && (
+          {hasFindings && (
             <Button
               variant="ghost"
               size="sm"
@@ -232,7 +234,7 @@ export function CoverageReport({
                 <li key={index} className="flex items-start gap-3 rounded-lg bg-muted/30 p-3 text-sm text-muted-foreground">
                   <span className="mt-0.5 text-primary" aria-hidden="true">&bull;</span>
                   <span className="min-w-0 flex-1">{recommendation}</span>
-                  {onGenerateRecommendation && (
+                  {onGenerateRecommendation && isTestableCoverageInstruction(recommendation) && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -243,6 +245,11 @@ export function CoverageReport({
                       <Sparkles className="h-3.5 w-3.5" />
                       Convert to Testcase
                     </Button>
+                  )}
+                  {!isTestableCoverageInstruction(recommendation) && (
+                    <span className="shrink-0 rounded-full border border-border px-2 py-1 text-[10px] font-semibold uppercase text-muted-foreground">
+                      Human review
+                    </span>
                   )}
                 </li>
               ))}

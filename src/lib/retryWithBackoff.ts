@@ -1,5 +1,5 @@
 import { getStoredAiRequestSettings } from '@/lib/aiSettings';
-import { isRetryableAiErrorMessage } from '@/lib/providerErrors';
+import { getProviderRetryAfterMs, isRetryableAiErrorMessage } from '@/lib/providerErrors';
 
 interface RetryOptions {
   maxRetries?: number;
@@ -416,7 +416,10 @@ export async function invokeWithRetry(
       if (data?.error) throw new Error(data.error);
     }
 
-    const delay = Math.min(baseDelay * Math.pow(2, attempt) + Math.random() * 500, maxDelay);
+    const providerRetryAfterMs = getProviderRetryAfterMs(errorMsg);
+    const delay = providerRetryAfterMs !== null
+      ? Math.min(providerRetryAfterMs + 750, 120_000)
+      : Math.min(baseDelay * Math.pow(2, attempt) + Math.random() * 500, maxDelay);
     await new Promise(resolve => setTimeout(resolve, delay));
   }
 
