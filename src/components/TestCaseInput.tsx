@@ -234,7 +234,7 @@ export function TestCaseInput({ onGenerate, isLoading, stage, stageMessage, onCl
         {usesAutomaticQualityGate && (
           <p className="text-center text-xs leading-5 text-muted-foreground">
             Full Requirement runs coverage automatically, converts missing scenarios and testable recommendations,
-            removes duplicates, and delivers only the final reviewed suite.
+            removes duplicates, rechecks the complete merged suite, and delivers the best reviewed result.
           </p>
         )}
 

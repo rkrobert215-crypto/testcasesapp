@@ -27,7 +27,11 @@ import {
   getGenerationModeProfile,
   type GenerationMode,
 } from '../supabase/functions/_shared/generationMode.ts';
-import { buildTechnicalWorkflowCoverageChecklist } from '../supabase/functions/_shared/technicalWorkflowCoverage.ts';
+import { buildMissingExplicitRequirementScenarios } from '../supabase/functions/_shared/explicitRequirementCoverage.ts';
+import {
+  buildMissingTechnicalScenarios,
+  buildTechnicalWorkflowCoverageChecklist,
+} from '../supabase/functions/_shared/technicalWorkflowCoverage.ts';
 import { formatRequirementInsights } from '../supabase/functions/_shared/qaPlanningContext.ts';
 import {
   clarificationQuestionsSchema,
@@ -47,7 +51,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_SIZE = 50;
 const PROMPT_VERSION = 'qa-pro-node-v2';
 const AUDIT_CACHE_VERSION = 'audit-test-cases-2026-08-10-v2';
-const COVERAGE_CACHE_VERSION = 'validate-coverage-2026-08-10-v2';
+const COVERAGE_CACHE_VERSION = 'validate-coverage-2026-08-10-v3';
 const GENERATION_TIME_BUDGET_MS = 20 * 60 * 1000;
 const RETRY_STAGE_RESERVE_MS = 3 * 60 * 1000;
 const FINALIZATION_RESERVE_MS = 60_000;
@@ -1308,6 +1312,104 @@ ${generationProfile.mergePromptLines.map((line) => `- ${line}`).join('\n')}`;
   return responseBody;
 }
 
+interface CoverageMissingScenario {
+  scenario: string;
+  priority: 'High' | 'Medium' | 'Low';
+  type: 'Positive' | 'Negative';
+}
+
+interface CoverageAnalysisResult {
+  coverageScore: number;
+  summary: string;
+  coveredAreas: string[];
+  missingScenarios: CoverageMissingScenario[];
+  recommendations: string[];
+}
+
+const COVERAGE_GAP_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'in', 'is', 'it',
+  'of', 'on', 'or', 'that', 'the', 'their', 'this', 'to', 'under', 'when', 'with',
+  'without', 'verify', 'validates', 'validate', 'ensure',
+]);
+
+function coverageGapTokens(value: string) {
+  return new Set(
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(/\s+/)
+      .filter((token) => token.length > 2 && !COVERAGE_GAP_STOP_WORDS.has(token))
+      .map((token) => token.endsWith('s') && token.length > 4 ? token.slice(0, -1) : token)
+  );
+}
+
+function coverageGapsOverlap(left: string, right: string) {
+  const leftTokens = coverageGapTokens(left);
+  const rightTokens = coverageGapTokens(right);
+  const smallerSize = Math.min(leftTokens.size, rightTokens.size);
+  if (smallerSize === 0) return false;
+
+  let overlap = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) overlap += 1;
+  }
+
+  return overlap >= 2 && overlap / smallerSize >= 0.45;
+}
+
+function enforceCoverageBackstops(
+  input: string,
+  inputType: string,
+  testCases: unknown[],
+  result: CoverageAnalysisResult
+): CoverageAnalysisResult {
+  const aiReportedScenarios = [...result.missingScenarios];
+  const missingScenarios = [...aiReportedScenarios];
+  const explicitRequirementScenarios = inputType === 'requirement'
+    ? buildMissingExplicitRequirementScenarios(input, testCases)
+    : [];
+  const requiredTechnicalScenarios = buildMissingTechnicalScenarios(input, JSON.stringify(testCases));
+  let enforcedExplicitGapCount = 0;
+  let enforcedTechnicalGapCount = 0;
+
+  for (const requiredScenario of explicitRequirementScenarios) {
+    const alreadyReported = aiReportedScenarios.some((existing) =>
+      coverageGapsOverlap(existing.scenario, requiredScenario.scenario)
+    );
+    if (!alreadyReported) {
+      missingScenarios.push(requiredScenario);
+      enforcedExplicitGapCount += 1;
+    }
+  }
+
+  for (const requiredScenario of requiredTechnicalScenarios) {
+    const alreadyReported = aiReportedScenarios.some((existing) =>
+      coverageGapsOverlap(existing.scenario, requiredScenario.scenario)
+    );
+    if (!alreadyReported) {
+      missingScenarios.push(requiredScenario);
+      enforcedTechnicalGapCount += 1;
+    }
+  }
+
+  const reportedScore = Number.isFinite(result.coverageScore)
+    ? Math.max(0, Math.min(100, result.coverageScore))
+    : 0;
+  const scoreCap = Math.max(25, 100 - missingScenarios.length * 4);
+  const coverageScore = Math.min(reportedScore, scoreCap);
+  const enforcedGapCount = enforcedExplicitGapCount + enforcedTechnicalGapCount;
+  const summary = enforcedGapCount > 0
+    ? `${result.summary} Independent rule checks added ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? '' : 's'} that the AI review did not report.`
+    : result.summary;
+
+  return {
+    ...result,
+    coverageScore,
+    summary,
+    missingScenarios,
+  };
+}
+
 async function handleValidateCoverage(body: Record<string, unknown>) {
   const input = typeof body.input === 'string' ? body.input : '';
   const inputType = typeof body.inputType === 'string' ? body.inputType : 'requirement';
@@ -1369,13 +1471,7 @@ ${JSON.stringify(testCases, null, 2)}
     userParts.push({ type: 'image', dataUrl: image });
   }
 
-  const parsed = await generateReviewedStructuredData<{
-    coverageScore: number;
-    summary: string;
-    coveredAreas: string[];
-    missingScenarios: Array<{ scenario: string; priority: 'High' | 'Medium' | 'Low'; type: 'Positive' | 'Negative' }>;
-    recommendations: string[];
-  }>({
+  const parsed = await generateReviewedStructuredData<CoverageAnalysisResult>({
     aiSettings,
     artifactLabel: 'coverage analysis report',
     featureName: 'validate-coverage',
@@ -1439,10 +1535,11 @@ ${generationProfile.coveragePromptLines.map((line) => `- ${line}`).join('\n')}`,
       'Tighten the coverage judgment so the report is honest, risk-aware, and useful for real QA decision-making.',
   });
 
+  const responseBody = enforceCoverageBackstops(input, inputType, testCases, parsed);
   if (cacheKey) {
-    setCachedRequest(cacheKey, parsed);
+    setCachedRequest(cacheKey, responseBody);
   }
-  return parsed;
+  return responseBody;
 }
 
 async function handleTestPlan(body: Record<string, unknown>) {

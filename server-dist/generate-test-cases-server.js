@@ -1332,6 +1332,96 @@ function findMissingTechnicalWorkflowCoverage(input, suiteText) {
   const normalizedSuite = suiteText.toLowerCase();
   return buildTechnicalCoverageExpectations(input).filter((expectation) => !includesAny(normalizedSuite, expectation.evidenceTerms)).map((expectation) => expectation.label);
 }
+var TECHNICAL_GAP_SCENARIOS = {
+  "complete trigger/type/status matrix": {
+    scenario: "Verify the complete matrix of every stated event/status trigger and every supported entity or order type, including each remaining supported type, for qualifying and non-qualifying outcomes.",
+    priority: "High",
+    type: "Positive"
+  },
+  "sequential replay/reprocessing idempotency": {
+    scenario: "Verify sequential replay or reprocessing of the same qualifying event produces exactly one persisted side effect.",
+    priority: "High",
+    type: "Negative"
+  },
+  "concurrent duplicate-event idempotency": {
+    scenario: "Verify concurrent duplicate delivery of the same qualifying event produces exactly one persisted side effect without a race-condition duplicate.",
+    priority: "High",
+    type: "Negative"
+  },
+  "existing advanced status preservation": {
+    scenario: "Verify reprocessing does not reset or downgrade an existing record that has already advanced beyond its initial status.",
+    priority: "High",
+    type: "Negative"
+  },
+  "original creation timestamp preservation": {
+    scenario: "Verify replay or reprocessing preserves the original creation timestamp instead of overwriting it.",
+    priority: "High",
+    type: "Negative"
+  },
+  "database uniqueness enforcement for duplicate prevention": {
+    scenario: "Verify the persisted uniqueness constraint or index enforces the stated duplicate-prevention behavior under repeated and concurrent processing.",
+    priority: "High",
+    type: "Negative"
+  },
+  "mixed-tenant feature-flag isolation": {
+    scenario: "Verify a mixed-tenant batch applies the feature side effect only to records belonging to an eligible tenant with the required configuration enabled.",
+    priority: "High",
+    type: "Negative"
+  },
+  "cross-tenant identifier safety": {
+    scenario: "Verify tenant, owner, buyer, and entity identifiers cannot be crossed or mismatched when records from multiple tenants are processed together.",
+    priority: "High",
+    type: "Negative"
+  },
+  "NULL or missing source-data handling": {
+    scenario: "Verify NULL or missing source records and required source fields do not create an invalid side effect or cause an unhandled processing failure.",
+    priority: "High",
+    type: "Negative"
+  },
+  "malformed structured-data handling": {
+    scenario: "Verify malformed structured source data is handled safely without creating an invalid side effect or breaking the main processing flow.",
+    priority: "High",
+    type: "Negative"
+  },
+  "casing and whitespace behavior for exact exemptions": {
+    scenario: "Verify the documented casing and surrounding-whitespace behavior for exact exemption or origin values, recording a clarification when normalization is unspecified.",
+    priority: "Medium",
+    type: "Negative"
+  },
+  "non-interference with existing related records": {
+    scenario: "Verify the new persisted side effect does not modify, delete, duplicate, or reset unrelated existing records or columns.",
+    priority: "High",
+    type: "Negative"
+  },
+  "non-qualifying main-flow regression protection": {
+    scenario: "Verify normal main-flow processing continues unchanged for records that do not qualify for the new side effect.",
+    priority: "High",
+    type: "Positive"
+  },
+  "side-effect failure isolation from the main flow": {
+    scenario: "Verify a side-effect insert or update failure follows the required transaction behavior without silently corrupting or unintentionally blocking the main flow.",
+    priority: "High",
+    type: "Negative"
+  },
+  "repeated-failure retry/dead-letter behavior": {
+    scenario: "Verify repeated side-effect failures follow the configured retry and dead-letter policy without inventing unspecified retry counts or queue names.",
+    priority: "High",
+    type: "Negative"
+  },
+  "large-batch correctness and performance": {
+    scenario: "Verify a large mixed batch preserves correctness, duplicate prevention, tenant isolation, and completion within the configured timeout or performance baseline.",
+    priority: "Medium",
+    type: "Positive"
+  },
+  "downstream action and persisted status lifecycle": {
+    scenario: "Verify the downstream user action is available and advances the persisted lifecycle status without creating a duplicate requirement record.",
+    priority: "High",
+    type: "Positive"
+  }
+};
+function buildMissingTechnicalScenarios(input, suiteText) {
+  return findMissingTechnicalWorkflowCoverage(input, suiteText).map((label) => TECHNICAL_GAP_SCENARIOS[label]).filter((scenario) => Boolean(scenario));
+}
 
 // supabase/functions/_shared/requirementAnalysis.ts
 var REQUIREMENT_ANALYSIS_CACHE_VERSION = "2026-08-10-v5";
@@ -2853,6 +2943,126 @@ async function runGenerateTestCasePipeline({
   return { testCases: bestResult };
 }
 
+// supabase/functions/_shared/explicitRequirementCoverage.ts
+var HEADING_NAMES = /* @__PURE__ */ new Set([
+  "acceptance criteria",
+  "availability",
+  "availability / conditions",
+  "behavior",
+  "conditions",
+  "evaluation",
+  "permissions",
+  "rule evaluation",
+  "scope",
+  "story",
+  "supports",
+  "validation rules",
+  "works with"
+]);
+var REQUIREMENT_SIGNAL = /\b(must|shall|should|need to|needs to|only|except|ignored|ignore|defaults?|appears?|display(?:s|ed)?|creates?|updates?|preserves?|prevents?|allows?|supports?|applies?|evaluates?|clears?|deselects?|filters?|redirects?|sends?|shows?|requires?|cannot|does not|do not|if|when|after|before)\b/i;
+var NEGATIVE_SIGNAL = /\b(no|not|never|cannot|must not|does not|do not|disabled|invalid|missing|malformed|unauthorized|forbidden|ignored|false|except|without|failure|fails?|duplicate)\b/i;
+var BULLET_PREFIX = /^\s*(?:[-*\u2022]|\[(?: |x|X)?\]|\d+[.)])\s*/;
+var COVERAGE_STOP_WORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "been",
+  "being",
+  "by",
+  "for",
+  "from",
+  "has",
+  "have",
+  "in",
+  "is",
+  "it",
+  "its",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "their",
+  "then",
+  "this",
+  "to",
+  "user",
+  "users",
+  "using",
+  "when",
+  "where",
+  "which",
+  "with"
+]);
+function cleanClause(value) {
+  return value.replace(BULLET_PREFIX, "").replace(/^acceptance criteria\s*:\s*/i, "").replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
+}
+function isHeading(value) {
+  const normalized = value.replace(/:$/, "").trim().toLowerCase();
+  return HEADING_NAMES.has(normalized) || value.endsWith(":") && value.split(/\s+/).length <= 8;
+}
+function normalizeToken(token) {
+  if (token.endsWith("ies") && token.length > 5) return `${token.slice(0, -3)}y`;
+  if (token.endsWith("ing") && token.length > 6) return token.slice(0, -3);
+  if (token.endsWith("ed") && token.length > 5) return token.slice(0, -2);
+  if (token.endsWith("s") && token.length > 4) return token.slice(0, -1);
+  return token;
+}
+function significantTokens(value) {
+  return new Set(
+    value.toLowerCase().replace(/[^a-z0-9_]+/g, " ").split(/\s+/).filter((token) => token.length > 1 && !COVERAGE_STOP_WORDS.has(token)).map(normalizeToken)
+  );
+}
+function clauseIsCovered(clause, suiteRows) {
+  const clauseTokens = significantTokens(clause);
+  const requiresNegativeEvidence = NEGATIVE_SIGNAL.test(clause);
+  if (clauseTokens.size === 0) return true;
+  return suiteRows.some((row) => {
+    if (requiresNegativeEvidence && !NEGATIVE_SIGNAL.test(row)) return false;
+    const rowTokens = significantTokens(row);
+    let overlap = 0;
+    for (const token of clauseTokens) {
+      if (rowTokens.has(token)) overlap += 1;
+    }
+    const requiredOverlap = clauseTokens.size <= 3 ? Math.min(2, clauseTokens.size) : Math.max(3, Math.ceil(clauseTokens.size * 0.5));
+    return overlap >= requiredOverlap;
+  });
+}
+function extractExplicitRequirementClauses(input) {
+  const clauses = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const rawLine of input.replaceAll("\r", "").split("\n")) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("```") || isHeading(trimmed)) continue;
+    const hasBullet = BULLET_PREFIX.test(trimmed);
+    const candidates = hasBullet ? [trimmed] : trimmed.split(/(?<=[.!?])\s+/);
+    for (const candidate of candidates) {
+      const cleaned = cleanClause(candidate);
+      if (cleaned.length < 8 || cleaned.length > 320) continue;
+      if (!hasBullet && !REQUIREMENT_SIGNAL.test(cleaned)) continue;
+      if (/^(insert into|values\s*\(|on duplicate key update)/i.test(cleaned)) continue;
+      const key = cleaned.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        clauses.push(cleaned);
+      }
+    }
+  }
+  return clauses.slice(0, 40);
+}
+function buildMissingExplicitRequirementScenarios(input, testCases) {
+  const suiteRows = testCases.map((testCase) => JSON.stringify(testCase));
+  return extractExplicitRequirementClauses(input).filter((clause) => !clauseIsCovered(clause, suiteRows)).map((clause) => ({
+    scenario: `Verify this explicit requirement point with complete steps and observable results: ${clause}`,
+    priority: NEGATIVE_SIGNAL.test(clause) ? "High" : "Medium",
+    type: NEGATIVE_SIGNAL.test(clause) ? "Negative" : "Positive"
+  }));
+}
+
 // supabase/functions/_shared/qaPlanningContext.ts
 function formatRequirementInsights(insights) {
   if (!insights) {
@@ -3460,7 +3670,7 @@ var PORT = Number(process.env.LOCAL_AI_SERVER_PORT || 8787);
 var MAX_BODY_BYTES = 20 * 1024 * 1024;
 var CACHE_TTL_MS2 = 5 * 60 * 1e3;
 var AUDIT_CACHE_VERSION = "audit-test-cases-2026-08-10-v2";
-var COVERAGE_CACHE_VERSION = "validate-coverage-2026-08-10-v2";
+var COVERAGE_CACHE_VERSION = "validate-coverage-2026-08-10-v3";
 var GENERATION_TIME_BUDGET_MS = 20 * 60 * 1e3;
 var RETRY_STAGE_RESERVE_MS = 3 * 60 * 1e3;
 var FUNCTION_ROUTE_PREFIX = "/functions/v1";
@@ -3927,6 +4137,90 @@ ${generationProfile.mergePromptLines.map((line) => `- ${line}`).join("\n")}`;
   setCachedRequest(cacheKey, responseBody);
   return responseBody;
 }
+var COVERAGE_GAP_STOP_WORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "by",
+  "for",
+  "from",
+  "in",
+  "is",
+  "it",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "their",
+  "this",
+  "to",
+  "under",
+  "when",
+  "with",
+  "without",
+  "verify",
+  "validates",
+  "validate",
+  "ensure"
+]);
+function coverageGapTokens(value) {
+  return new Set(
+    value.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(/\s+/).filter((token) => token.length > 2 && !COVERAGE_GAP_STOP_WORDS.has(token)).map((token) => token.endsWith("s") && token.length > 4 ? token.slice(0, -1) : token)
+  );
+}
+function coverageGapsOverlap(left, right) {
+  const leftTokens = coverageGapTokens(left);
+  const rightTokens = coverageGapTokens(right);
+  const smallerSize = Math.min(leftTokens.size, rightTokens.size);
+  if (smallerSize === 0) return false;
+  let overlap = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) overlap += 1;
+  }
+  return overlap >= 2 && overlap / smallerSize >= 0.45;
+}
+function enforceCoverageBackstops(input, inputType, testCases, result) {
+  const aiReportedScenarios = [...result.missingScenarios];
+  const missingScenarios = [...aiReportedScenarios];
+  const explicitRequirementScenarios = inputType === "requirement" ? buildMissingExplicitRequirementScenarios(input, testCases) : [];
+  const requiredTechnicalScenarios = buildMissingTechnicalScenarios(input, JSON.stringify(testCases));
+  let enforcedExplicitGapCount = 0;
+  let enforcedTechnicalGapCount = 0;
+  for (const requiredScenario of explicitRequirementScenarios) {
+    const alreadyReported = aiReportedScenarios.some(
+      (existing) => coverageGapsOverlap(existing.scenario, requiredScenario.scenario)
+    );
+    if (!alreadyReported) {
+      missingScenarios.push(requiredScenario);
+      enforcedExplicitGapCount += 1;
+    }
+  }
+  for (const requiredScenario of requiredTechnicalScenarios) {
+    const alreadyReported = aiReportedScenarios.some(
+      (existing) => coverageGapsOverlap(existing.scenario, requiredScenario.scenario)
+    );
+    if (!alreadyReported) {
+      missingScenarios.push(requiredScenario);
+      enforcedTechnicalGapCount += 1;
+    }
+  }
+  const reportedScore = Number.isFinite(result.coverageScore) ? Math.max(0, Math.min(100, result.coverageScore)) : 0;
+  const scoreCap = Math.max(25, 100 - missingScenarios.length * 4);
+  const coverageScore = Math.min(reportedScore, scoreCap);
+  const enforcedGapCount = enforcedExplicitGapCount + enforcedTechnicalGapCount;
+  const summary = enforcedGapCount > 0 ? `${result.summary} Independent rule checks added ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? "" : "s"} that the AI review did not report.` : result.summary;
+  return {
+    ...result,
+    coverageScore,
+    summary,
+    missingScenarios
+  };
+}
 async function handleValidateCoverage(body) {
   const input = typeof body.input === "string" ? body.input : "";
   const inputType = typeof body.inputType === "string" ? body.inputType : "requirement";
@@ -4038,10 +4332,11 @@ ${generationProfile.coveragePromptLines.map((line) => `- ${line}`).join("\n")}`,
     ],
     correctionReminder: "Tighten the coverage judgment so the report is honest, risk-aware, and useful for real QA decision-making."
   });
+  const responseBody = enforceCoverageBackstops(input, inputType, testCases, parsed);
   if (cacheKey) {
-    setCachedRequest(cacheKey, parsed);
+    setCachedRequest(cacheKey, responseBody);
   }
-  return parsed;
+  return responseBody;
 }
 async function handleTestPlan(body) {
   const requirement = String(body.requirement ?? "").trim();

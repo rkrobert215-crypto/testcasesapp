@@ -89,6 +89,8 @@ interface QualityGateSummary {
   detail: string;
 }
 
+const MAX_AUTOMATIC_QUALITY_PASSES = 2;
+
 async function requestCoverageImprovements(
   source: CoverageSourceContext,
   coverage: CoverageResult,
@@ -166,68 +168,91 @@ export default function Index() {
       return;
     }
 
-    const source: CoverageSourceContext = {
-      input,
-      inputType,
-      imagesBase64,
-      testCases: generated,
-    };
+    let finalSuite = generated;
 
     try {
       updateGenerationStage('validating', 'Checking every requirement point against the initial testcase suite...');
-      const coverage = await validateCoverage(input, inputType, generated, imagesBase64, { silent: true });
+      let coverage = await validateCoverage(input, inputType, finalSuite, imagesBase64, { silent: true });
       if (!coverage) {
         throw new Error('Automatic coverage validation returned no result.');
       }
 
-      const requestedImprovementCount = countCoverageImprovementRequests(coverage);
-      let finalSuite = generated;
+      const initialMissingCount = coverage.missingScenarios.length;
+      const initialRecommendationCount = coverage.recommendations.length;
       let addedCount = 0;
+      let completedPasses = 0;
 
-      if (requestedImprovementCount > 0) {
+      while (
+        countCoverageImprovementRequests(coverage) > 0 &&
+        completedPasses < MAX_AUTOMATIC_QUALITY_PASSES
+      ) {
         updateGenerationStage(
           'retrying',
-          `Converting ${coverage.missingScenarios.length} missing scenario${coverage.missingScenarios.length === 1 ? '' : 's'} and ${coverage.recommendations.length} recommendation${coverage.recommendations.length === 1 ? '' : 's'} into complete testcases...`
+          `Quality pass ${completedPasses + 1}/${MAX_AUTOMATIC_QUALITY_PASSES}: converting ${coverage.missingScenarios.length} missing scenario${coverage.missingScenarios.length === 1 ? '' : 's'} and ${coverage.recommendations.length} recommendation${coverage.recommendations.length === 1 ? '' : 's'} into complete testcases...`
         );
-        const improvements = await requestCoverageImprovements(source, coverage);
-        addedCount = improvements.additions.length;
-        if (addedCount > 0) {
-          finalSuite = mergeTestCasesPreservingExisting(generated, improvements.additions);
-          clearCoverageResult();
+        const improvements = await requestCoverageImprovements(
+          { input, inputType, imagesBase64, testCases: finalSuite },
+          coverage
+        );
+        if (improvements.additions.length === 0) {
+          break;
         }
+
+        finalSuite = mergeTestCasesPreservingExisting(finalSuite, improvements.additions);
+        addedCount += improvements.additions.length;
+        completedPasses += 1;
+
+        updateGenerationStage(
+          'validating',
+          `Rechecking the complete ${finalSuite.length}-testcase suite after quality pass ${completedPasses}...`
+        );
+        const recheckedCoverage = await validateCoverage(
+          input,
+          inputType,
+          finalSuite,
+          imagesBase64,
+          { silent: true }
+        );
+        if (!recheckedCoverage) {
+          throw new Error('Automatic post-enhancement coverage validation returned no result.');
+        }
+        coverage = recheckedCoverage;
       }
 
+      const remainingImprovementCount = countCoverageImprovementRequests(coverage);
       updateGenerationStage('finalizing', 'Deduplicating, sequencing, and preparing the final reviewed suite...');
 
-      if (requestedImprovementCount === 0) {
+      if (remainingImprovementCount === 0 && addedCount === 0) {
+        clearCoverageResult();
         setQualityGateSummary({
           status: 'passed',
           title: 'Automatic QA gate passed',
           detail: `Coverage checked at ${coverage.coverageScore}% with no missing scenarios or testable recommendations.`,
         });
-      } else if (addedCount > 0) {
+      } else if (remainingImprovementCount === 0) {
+        clearCoverageResult();
         setQualityGateSummary({
           status: 'improved',
           title: 'Automatic QA gate improved the suite',
-          detail: `Coverage found ${coverage.missingScenarios.length} gap${coverage.missingScenarios.length === 1 ? '' : 's'} and ${coverage.recommendations.length} recommendation${coverage.recommendations.length === 1 ? '' : 's'}; ${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added before delivery.`,
+          detail: `The first review found ${initialMissingCount} gap${initialMissingCount === 1 ? '' : 's'} and ${initialRecommendationCount} recommendation${initialRecommendationCount === 1 ? '' : 's'}. ${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added and the complete suite passed revalidation.`,
         });
       } else {
         setQualityGateSummary({
           status: 'attention',
-          title: 'Coverage checked - review still advised',
-          detail: 'The remaining items were already covered, duplicates, clarifications, or process-only recommendations, so no fabricated testcase rows were added.',
+          title: 'Automatic QA review completed with remaining items',
+          detail: `${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added across ${completedPasses} quality pass${completedPasses === 1 ? '' : 'es'}, but ${coverage.missingScenarios.length} gap${coverage.missingScenarios.length === 1 ? '' : 's'} and ${coverage.recommendations.length} recommendation${coverage.recommendations.length === 1 ? '' : 's'} still need review. They remain visible below and were not silently ignored.`,
         });
       }
 
       deliverTestCases(finalSuite, {
-        title: addedCount > 0 ? 'Final reviewed suite ready' : 'Quality-checked suite ready',
-        description: addedCount > 0
-          ? `${finalSuite.length} testcases delivered after automatically adding ${addedCount} coverage improvement${addedCount === 1 ? '' : 's'}.`
-          : `${finalSuite.length} testcases delivered after the automatic coverage review.`,
+        title: remainingImprovementCount > 0
+          ? 'Reviewed suite ready with attention items'
+          : addedCount > 0 ? 'Final reviewed suite ready' : 'Quality-checked suite ready',
+        description: `${finalSuite.length} testcases delivered after ${completedPasses} automatic enhancement pass${completedPasses === 1 ? '' : 'es'} and complete-suite revalidation${remainingImprovementCount > 0 ? `; ${remainingImprovementCount} review item${remainingImprovementCount === 1 ? ' remains' : 's remain'} visible` : ''}.`,
         stageMessage: 'Final quality-checked testcases ready.',
       });
       saveToHistory(inputType, input, finalSuite, {
-        inputSummary: `${input.slice(0, 80) || 'Full requirement'} - auto QA checked`,
+        inputSummary: `${input.slice(0, 80) || 'Full requirement'} - auto QA reviewed`,
         imagesBase64,
       });
     } catch (error) {
@@ -235,20 +260,20 @@ export default function Index() {
       const aiError = describeAiError(
         error,
         'Automatic QA gate incomplete',
-        'The initial suite was preserved, but the automatic coverage enhancement could not finish.'
+        'The best available suite was preserved, but the automatic coverage enhancement could not finish.'
       );
       setQualityGateSummary({
         status: 'incomplete',
         title: 'Automatic QA gate incomplete',
-        detail: 'The initial suite was preserved. Use Check Coverage to retry the remaining review without regenerating it.',
+        detail: 'The best available suite was preserved. Use Check Coverage to retry the remaining review without regenerating it.',
       });
-      deliverTestCases(generated, {
+      deliverTestCases(finalSuite, {
         title: aiError.title,
-        description: `${aiError.description} The initial ${generated.length}-testcase suite is available and was not lost.`,
-        stageMessage: 'Initial suite ready; automatic coverage review needs retry.',
+        description: `${aiError.description} The best available ${finalSuite.length}-testcase suite is available and was not lost.`,
+        stageMessage: 'Best available suite ready; automatic coverage review needs retry.',
         variant: 'destructive',
       });
-      saveToHistory(inputType, input, generated, {
+      saveToHistory(inputType, input, finalSuite, {
         inputSummary: `${input.slice(0, 80) || 'Full requirement'} - QA gate needs retry`,
         imagesBase64,
       });

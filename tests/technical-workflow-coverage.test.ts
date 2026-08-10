@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildMissingTechnicalScenarios,
   buildTechnicalWorkflowCoverageChecklist,
   detectTechnicalWorkflowSignals,
   findMissingTechnicalWorkflowCoverage,
@@ -81,6 +82,10 @@ test('technical coverage audit identifies every important gap in a weak POE suit
     'large-batch correctness and performance',
     'downstream action and persisted status lifecycle',
   ]);
+  const enforcedScenarios = buildMissingTechnicalScenarios(POE_REQUIREMENT, weakSuite);
+  assert.equal(enforcedScenarios.length, gaps.length);
+  assert.match(enforcedScenarios[0].scenario, /every stated event\/status trigger/i);
+  assert.ok(enforcedScenarios.every((scenario) => scenario.priority && scenario.type));
 });
 
 test('technical coverage audit accepts a suite containing all strengthened POE checks', () => {
@@ -136,4 +141,5 @@ test('ordinary list duplicate-removal wording does not trigger backend workflow 
 
   assert.equal(detectTechnicalWorkflowSignals(listRequirement).detected, false);
   assert.deepEqual(buildTechnicalWorkflowCoverageChecklist(listRequirement), []);
+  assert.deepEqual(buildMissingTechnicalScenarios(listRequirement, ''), []);
 });

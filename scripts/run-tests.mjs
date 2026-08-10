@@ -19,6 +19,7 @@ const testEntries = [
   'tests/image-payload-budget.test.ts',
   'tests/test-case-identity.test.ts',
   'tests/technical-workflow-coverage.test.ts',
+  'tests/explicit-requirement-coverage.test.ts',
   'tests/coverage-quality-gate.test.ts',
 ].map((fileName) => path.join(projectRoot, fileName));
 

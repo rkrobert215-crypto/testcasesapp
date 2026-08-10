@@ -14,6 +14,12 @@ interface CoverageExpectation {
   evidenceTerms: string[];
 }
 
+export interface TechnicalMissingScenario {
+  scenario: string;
+  priority: 'High' | 'Medium' | 'Low';
+  type: 'Positive' | 'Negative';
+}
+
 function includesAny(text: string, terms: string[]) {
   return terms.some((term) => text.includes(term));
 }
@@ -286,4 +292,101 @@ export function findMissingTechnicalWorkflowCoverage(input: string, suiteText: s
   return buildTechnicalCoverageExpectations(input)
     .filter((expectation) => !includesAny(normalizedSuite, expectation.evidenceTerms))
     .map((expectation) => expectation.label);
+}
+
+const TECHNICAL_GAP_SCENARIOS: Record<string, TechnicalMissingScenario> = {
+  'complete trigger/type/status matrix': {
+    scenario: 'Verify the complete matrix of every stated event/status trigger and every supported entity or order type, including each remaining supported type, for qualifying and non-qualifying outcomes.',
+    priority: 'High',
+    type: 'Positive',
+  },
+  'sequential replay/reprocessing idempotency': {
+    scenario: 'Verify sequential replay or reprocessing of the same qualifying event produces exactly one persisted side effect.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'concurrent duplicate-event idempotency': {
+    scenario: 'Verify concurrent duplicate delivery of the same qualifying event produces exactly one persisted side effect without a race-condition duplicate.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'existing advanced status preservation': {
+    scenario: 'Verify reprocessing does not reset or downgrade an existing record that has already advanced beyond its initial status.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'original creation timestamp preservation': {
+    scenario: 'Verify replay or reprocessing preserves the original creation timestamp instead of overwriting it.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'database uniqueness enforcement for duplicate prevention': {
+    scenario: 'Verify the persisted uniqueness constraint or index enforces the stated duplicate-prevention behavior under repeated and concurrent processing.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'mixed-tenant feature-flag isolation': {
+    scenario: 'Verify a mixed-tenant batch applies the feature side effect only to records belonging to an eligible tenant with the required configuration enabled.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'cross-tenant identifier safety': {
+    scenario: 'Verify tenant, owner, buyer, and entity identifiers cannot be crossed or mismatched when records from multiple tenants are processed together.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'NULL or missing source-data handling': {
+    scenario: 'Verify NULL or missing source records and required source fields do not create an invalid side effect or cause an unhandled processing failure.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'malformed structured-data handling': {
+    scenario: 'Verify malformed structured source data is handled safely without creating an invalid side effect or breaking the main processing flow.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'casing and whitespace behavior for exact exemptions': {
+    scenario: 'Verify the documented casing and surrounding-whitespace behavior for exact exemption or origin values, recording a clarification when normalization is unspecified.',
+    priority: 'Medium',
+    type: 'Negative',
+  },
+  'non-interference with existing related records': {
+    scenario: 'Verify the new persisted side effect does not modify, delete, duplicate, or reset unrelated existing records or columns.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'non-qualifying main-flow regression protection': {
+    scenario: 'Verify normal main-flow processing continues unchanged for records that do not qualify for the new side effect.',
+    priority: 'High',
+    type: 'Positive',
+  },
+  'side-effect failure isolation from the main flow': {
+    scenario: 'Verify a side-effect insert or update failure follows the required transaction behavior without silently corrupting or unintentionally blocking the main flow.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'repeated-failure retry/dead-letter behavior': {
+    scenario: 'Verify repeated side-effect failures follow the configured retry and dead-letter policy without inventing unspecified retry counts or queue names.',
+    priority: 'High',
+    type: 'Negative',
+  },
+  'large-batch correctness and performance': {
+    scenario: 'Verify a large mixed batch preserves correctness, duplicate prevention, tenant isolation, and completion within the configured timeout or performance baseline.',
+    priority: 'Medium',
+    type: 'Positive',
+  },
+  'downstream action and persisted status lifecycle': {
+    scenario: 'Verify the downstream user action is available and advances the persisted lifecycle status without creating a duplicate requirement record.',
+    priority: 'High',
+    type: 'Positive',
+  },
+};
+
+export function buildMissingTechnicalScenarios(
+  input: string,
+  suiteText: string
+): TechnicalMissingScenario[] {
+  return findMissingTechnicalWorkflowCoverage(input, suiteText)
+    .map((label) => TECHNICAL_GAP_SCENARIOS[label])
+    .filter((scenario): scenario is TechnicalMissingScenario => Boolean(scenario));
 }

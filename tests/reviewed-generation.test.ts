@@ -104,3 +104,91 @@ test('coverage recommendations are converted through the professional testcase p
     configureClaudeCliStructuredGenerator(null);
   }
 });
+
+test('coverage validation independently injects technical gaps missed by the AI verdict', async () => {
+  configureClaudeCliStructuredGenerator(async <T>() => ({
+    coverageScore: 100,
+    summary: 'The generated suite fully covers the requirement.',
+    coveredAreas: ['POE row creation'],
+    missingScenarios: [],
+    recommendations: [],
+  } as T));
+
+  try {
+    const result = await handleHostedFunctionRequest('validate-coverage', {
+      input: `
+        After processOrderUpserts transitions an order to SHIPPED, INSERT INTO sales_order_documents.
+        The tenant feature flag must be enabled, re-processing must be idempotent through
+        ON DUPLICATE KEY, buyer.additional_fields contains an origin exemption, and the buyer
+        is prompted to upload the document.
+      `,
+      inputType: 'requirement',
+      testCases: [
+        {
+          id: 'TC_001',
+          testCase: 'Verify that a document row is created after an eligible order ships',
+          testSteps: '1. Ship an eligible order.\n2. Query the document table.',
+          expectedResult: 'One pending document row exists.',
+        },
+      ],
+      aiSettings: {
+        provider: 'claude_cli',
+        claudeCliModel: 'sonnet',
+        generationMode: 'rob_style',
+        strictRequirementMode: true,
+      },
+    }) as {
+      coverageScore: number;
+      summary: string;
+      missingScenarios: Array<{ scenario: string }>;
+    };
+
+    assert.ok(result.coverageScore < 100);
+    assert.ok(result.missingScenarios.length >= 10);
+    assert.match(result.summary, /Independent rule checks added/);
+    assert.ok(result.missingScenarios.some((gap) => /concurrent duplicate/i.test(gap.scenario)));
+    assert.ok(result.missingScenarios.some((gap) => /mixed-tenant/i.test(gap.scenario)));
+  } finally {
+    configureClaudeCliStructuredGenerator(null);
+  }
+});
+
+test('coverage validation independently catches explicit gaps for a non-technical requirement', async () => {
+  configureClaudeCliStructuredGenerator(async <T>() => ({
+    coverageScore: 100,
+    summary: 'The suite is complete.',
+    coveredAreas: ['Filter rendering'],
+    missingScenarios: [],
+    recommendations: [],
+  } as T));
+
+  try {
+    const result = await handleHostedFunctionRequest('validate-coverage', {
+      input: `
+        Acceptance Criteria
+        - ALL appears first when configured filters exist.
+        - Selecting multiple filters combines results with OR behavior.
+        - Selecting ALL clears all other selected filters.
+        - Orders matching multiple filters appear only once with no duplicates.
+      `,
+      inputType: 'requirement',
+      testCases: [{ testCase: 'Verify that ALL appears first when configured filters exist' }],
+      aiSettings: {
+        provider: 'claude_cli',
+        claudeCliModel: 'sonnet',
+        generationMode: 'rob_style',
+        strictRequirementMode: true,
+      },
+    }) as {
+      coverageScore: number;
+      missingScenarios: Array<{ scenario: string }>;
+    };
+
+    assert.ok(result.coverageScore < 100);
+    assert.ok(result.missingScenarios.some((gap) => /OR behavior/i.test(gap.scenario)));
+    assert.ok(result.missingScenarios.some((gap) => /clears all other/i.test(gap.scenario)));
+    assert.ok(result.missingScenarios.some((gap) => /no duplicates/i.test(gap.scenario)));
+  } finally {
+    configureClaudeCliStructuredGenerator(null);
+  }
+});
