@@ -2,6 +2,12 @@ name: Deploy Cloudflare and Claude Lambda
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy_cloudflare:
+        description: Also deploy the Cloudflare Worker and static assets
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -23,6 +29,7 @@ jobs:
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
       VITE_USE_VERCEL_AI_API: 'true'
+      DEPLOY_CLOUDFLARE: ${{ inputs.deploy_cloudflare }}
 
     steps:
       - name: Validate required deployment secrets
@@ -39,13 +46,18 @@ jobs:
             AWS_GITHUB_ROLE_ARN
             AWS_REGION
             ECR_REPOSITORY
-            CLOUDFLARE_ACCOUNT_ID
-            CLOUDFLARE_API_TOKEN
-            APP_USERNAME
-            APP_PASSWORD
             LAMBDA_PROXY_TOKEN
             CLAUDE_CODE_OAUTH_TOKEN
           )
+
+          if [[ "$DEPLOY_CLOUDFLARE" == "true" ]]; then
+            required+=(
+              CLOUDFLARE_ACCOUNT_ID
+              CLOUDFLARE_API_TOKEN
+              APP_USERNAME
+              APP_PASSWORD
+            )
+          fi
 
           for name in "${required[@]}"; do
             if [[ -z "${!name}" ]]; then
@@ -59,6 +71,7 @@ jobs:
           fi
 
       - name: Validate Cloudflare API token
+        if: ${{ inputs.deploy_cloudflare == true }}
         shell: bash
         run: |
           if ! response="$(curl --fail --silent --show-error \
@@ -157,9 +170,11 @@ jobs:
           echo "LAMBDA_FUNCTION_URL=$LAMBDA_FUNCTION_URL" >> "$GITHUB_ENV"
 
       - name: Deploy protected Cloudflare Worker and static assets
+        if: ${{ inputs.deploy_cloudflare == true }}
         run: npx --yes wrangler@4 deploy
 
       - name: Configure Cloudflare secrets
+        if: ${{ inputs.deploy_cloudflare == true }}
         env:
           APP_USERNAME: ${{ secrets.APP_USERNAME }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
@@ -170,11 +185,13 @@ jobs:
           rm -f "$RUNNER_TEMP/cf-secrets.json"
 
       - name: Deploy final Worker version with configured secrets
+        if: ${{ inputs.deploy_cloudflare == true }}
         env:
           WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/wrangler-final.ndjson
         run: npx --yes wrangler@4 deploy
 
       - name: Verify protected health endpoint
+        if: ${{ inputs.deploy_cloudflare == true }}
         env:
           APP_USERNAME: ${{ secrets.APP_USERNAME }}
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
@@ -187,4 +204,23 @@ jobs:
             echo "- Cloudflare app: $WORKER_URL"
             echo "- Protected Lambda upstream: $LAMBDA_FUNCTION_URL"
             echo "- For Vercel Claude Subscription, set CLAUDE_CLI_LAMBDA_URL to the Lambda upstream and reuse the LAMBDA_PROXY_TOKEN secret."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify Lambda fast coverage endpoint
+        if: ${{ inputs.deploy_cloudflare == false }}
+        shell: bash
+        env:
+          LAMBDA_PROXY_TOKEN: ${{ secrets.LAMBDA_PROXY_TOKEN }}
+        run: |
+          response="$(curl --fail --silent --show-error \
+            --request POST \
+            --header 'Content-Type: application/json' \
+            --header "x-testcase-proxy-token: $LAMBDA_PROXY_TOKEN" \
+            --data '{"input":"Acceptance Criteria\n- Successful login redirects the user to the dashboard.","inputType":"requirement","testCases":[{"testCase":"Verify that successful login redirects the user to the dashboard","expectedResult":"The user is redirected to the dashboard."}],"deterministicOnly":true}' \
+            "${LAMBDA_FUNCTION_URL%/}/api/functions/validate-coverage")"
+          jq -e '.coverageScore == 100 and (.missingScenarios | length) == 0' <<<"$response" >/dev/null
+          {
+            echo "### Deployment endpoints"
+            echo "- Claude Lambda updated and its fast coverage route verified."
+            echo "- Vercel app: https://testcasesapp.vercel.app/"
           } >> "$GITHUB_STEP_SUMMARY"
