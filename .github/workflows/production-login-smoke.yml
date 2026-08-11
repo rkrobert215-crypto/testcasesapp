@@ -1,0 +1,65 @@
+name: Production Login Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  login-quality-smoke:
+    name: Generate and verify login testcases
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+
+    steps:
+      - name: Validate smoke-test secrets
+        shell: bash
+        env:
+          AWS_GITHUB_ROLE_ARN: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          LAMBDA_PROXY_TOKEN: ${{ secrets.LAMBDA_PROXY_TOKEN }}
+        run: |
+          missing=()
+          for name in AWS_GITHUB_ROLE_ARN AWS_REGION LAMBDA_PROXY_TOKEN; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error title=Missing production smoke secrets::Add these GitHub Actions secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Configure AWS with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Resolve protected Lambda endpoint
+        shell: bash
+        run: |
+          smoke_base_url="$(aws cloudformation describe-stacks \
+            --stack-name testcasesapp-claude \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaFunctionUrl'].OutputValue" \
+            --output text)"
+          if [[ -z "$smoke_base_url" || "$smoke_base_url" == "None" ]]; then
+            echo "::error title=Lambda endpoint missing::The testcasesapp-claude stack has no LambdaFunctionUrl output."
+            exit 1
+          fi
+          echo "SMOKE_BASE_URL=$smoke_base_url" >> "$GITHUB_ENV"
+
+      - name: Generate and quality-check login testcases
+        env:
+          LAMBDA_PROXY_TOKEN: ${{ secrets.LAMBDA_PROXY_TOKEN }}
+        run: node scripts/production-login-smoke.mjs
