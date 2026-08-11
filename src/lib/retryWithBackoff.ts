@@ -5,6 +5,7 @@ interface RetryOptions {
   maxRetries?: number;
   baseDelay?: number;
   maxDelay?: number;
+  maxAttemptDurationForRetryMs?: number;
 }
 
 interface FunctionStreamEvent {
@@ -390,11 +391,17 @@ export async function invokeWithRetry(
   body: Record<string, unknown>,
   options: RetryOptions = {}
 ) {
-  const { maxRetries = 3, baseDelay = 1000, maxDelay = 10000 } = options;
+  const {
+    maxRetries = 3,
+    baseDelay = 1000,
+    maxDelay = 10000,
+    maxAttemptDurationForRetryMs,
+  } = options;
   const requestBody = buildRequestBody(functionName, body);
   const directTarget = getDirectFunctionTarget(functionName);
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const attemptStartedAt = Date.now();
     const { data, error } = directTarget
       ? await invokeViaDirectFetch(functionName, requestBody)
       : await invokeViaSupabase(functionName, requestBody);
@@ -410,8 +417,12 @@ export async function invokeWithRetry(
         ? error.status
         : undefined;
     const isRetryable = isRetryableAiErrorMessage(errorMsg, status);
+    const attemptDurationMs = Date.now() - attemptStartedAt;
+    const longAttemptAlreadyConsumedRetryBudget =
+      typeof maxAttemptDurationForRetryMs === 'number' &&
+      attemptDurationMs >= maxAttemptDurationForRetryMs;
 
-    if (!isRetryable || attempt === maxRetries) {
+    if (!isRetryable || attempt === maxRetries || longAttemptAlreadyConsumedRetryBudget) {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
     }

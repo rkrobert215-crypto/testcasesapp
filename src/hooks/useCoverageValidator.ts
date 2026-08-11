@@ -20,6 +20,8 @@ export interface CoverageResult {
 
 interface CoverageValidationOptions {
   silent?: boolean;
+  deterministicOnly?: boolean;
+  publishResult?: boolean;
 }
 
 export function useCoverageValidator() {
@@ -43,12 +45,26 @@ export function useCoverageValidator() {
     }
 
     setIsValidating(true);
-    setCoverageResult(null);
+    if (options.publishResult !== false) {
+      setCoverageResult(null);
+    }
 
     try {
-      const data = await invokeWithRetry('validate-coverage', { input, inputType, imagesBase64, testCases });
+      const data = await invokeWithRetry(
+        'validate-coverage',
+        {
+          input,
+          inputType,
+          imagesBase64,
+          testCases,
+          deterministicOnly: options.deterministicOnly === true,
+        },
+        options.deterministicOnly ? { maxRetries: 1 } : undefined
+      );
 
-      setCoverageResult(data);
+      if (options.publishResult !== false) {
+        setCoverageResult(data);
+      }
 
       if (!options.silent) {
         const scoreLabel = data.coverageScore >= 90 ? 'Excellent' : data.coverageScore >= 70 ? 'Good' : 'Needs Review';
@@ -79,10 +95,15 @@ export function useCoverageValidator() {
     setCoverageResult(null);
   };
 
+  const publishCoverageResult = (result: CoverageResult) => {
+    setCoverageResult(result);
+  };
+
   return {
     isValidating,
     coverageResult,
     validateCoverage,
     clearCoverageResult,
+    publishCoverageResult,
   };
 }

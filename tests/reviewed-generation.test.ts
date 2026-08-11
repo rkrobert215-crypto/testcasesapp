@@ -105,6 +105,94 @@ test('coverage recommendations are converted through the professional testcase p
   }
 });
 
+test('automatic deterministic coverage check skips the AI provider and catches an explicit gap', async () => {
+  let providerCalls = 0;
+  configureClaudeCliStructuredGenerator(async <T>() => {
+    providerCalls += 1;
+    return {} as T;
+  });
+
+  try {
+    const result = await handleHostedFunctionRequest('validate-coverage', {
+      input: `
+        Acceptance Criteria
+        - Successful login redirects the user to the dashboard.
+        - The Forgot password link is available from the login page.
+      `,
+      inputType: 'requirement',
+      testCases: [{
+        testCase: 'Verify that successful login redirects the user to the dashboard',
+        expectedResult: 'The authenticated user is redirected to the dashboard.',
+      }],
+      deterministicOnly: true,
+      aiSettings: {
+        provider: 'claude_cli',
+        claudeCliModel: 'sonnet',
+        generationMode: 'rob_style',
+        strictRequirementMode: true,
+      },
+    }) as {
+      coverageScore: number;
+      summary: string;
+      missingScenarios: Array<{ scenario: string }>;
+    };
+
+    assert.equal(providerCalls, 0);
+    assert.ok(result.coverageScore < 100);
+    assert.match(result.summary, /Fast requirement checks found/);
+    assert.ok(result.missingScenarios.some((gap) => /Forgot password/i.test(gap.scenario)));
+  } finally {
+    configureClaudeCliStructuredGenerator(null);
+  }
+});
+
+test('automatic deterministic coverage check passes a complete suite without an AI call', async () => {
+  let providerCalls = 0;
+  configureClaudeCliStructuredGenerator(async <T>() => {
+    providerCalls += 1;
+    return {} as T;
+  });
+
+  try {
+    const result = await handleHostedFunctionRequest('validate-coverage', {
+      input: `
+        Acceptance Criteria
+        - Successful login redirects the user to the dashboard.
+        - The Forgot password link is available from the login page.
+      `,
+      inputType: 'requirement',
+      testCases: [
+        {
+          testCase: 'Verify that successful login redirects the user to the dashboard',
+          expectedResult: 'The authenticated user is redirected to the dashboard.',
+        },
+        {
+          testCase: 'Verify that the Forgot password link is available from the login page',
+          expectedResult: 'The Forgot password link is visible and available.',
+        },
+      ],
+      deterministicOnly: true,
+      aiSettings: {
+        provider: 'claude_cli',
+        claudeCliModel: 'sonnet',
+        generationMode: 'rob_style',
+        strictRequirementMode: true,
+      },
+    }) as {
+      coverageScore: number;
+      missingScenarios: Array<{ scenario: string }>;
+      recommendations: string[];
+    };
+
+    assert.equal(providerCalls, 0);
+    assert.equal(result.coverageScore, 100);
+    assert.deepEqual(result.missingScenarios, []);
+    assert.deepEqual(result.recommendations, []);
+  } finally {
+    configureClaudeCliStructuredGenerator(null);
+  }
+});
+
 test('coverage validation independently injects technical gaps missed by the AI verdict', async () => {
   configureClaudeCliStructuredGenerator(async <T>() => ({
     coverageScore: 100,

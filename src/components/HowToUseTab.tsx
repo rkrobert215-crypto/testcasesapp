@@ -9,8 +9,8 @@ const TABS_GUIDE = [
       { text: 'Select an input mode (Full Requirement, High Level TCs, Complete TC, Scenario, or Expected Result)', icon: <ArrowRight className="h-3.5 w-3.5" /> },
       { text: 'Paste your requirement / user story in the text area', icon: <ArrowRight className="h-3.5 w-3.5" /> },
       { text: 'Optionally attach up to 5 screenshots or mockups for visual context', icon: <ImagePlus className="h-3.5 w-3.5" /> },
-      { text: 'For Full Requirement, click "Generate + Auto QA Check" to create the initial structured suite', icon: <Brain className="h-3.5 w-3.5" /> },
-      { text: 'The app checks coverage, converts missing scenarios and testable recommendations into complete cases, deduplicates them, revalidates the whole merged suite, and runs one additional focused repair pass when needed', icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
+      { text: 'For Full Requirement, click "Generate Reviewed Test Cases" to create the structured senior-QA suite', icon: <Brain className="h-3.5 w-3.5" /> },
+      { text: 'The app performs a fast exact-requirement check, adds supported missing coverage in one consolidated pass when needed, deduplicates it, and rechecks the complete merged suite once', icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
       { text: 'Use "Check Coverage" afterward whenever you edit, delete, merge, audit, or restore test cases', icon: <CheckCircle2 className="h-3.5 w-3.5" /> },
     ],
     whatToTest: [

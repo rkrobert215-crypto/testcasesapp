@@ -81,7 +81,7 @@ export function CoverageReport({
           </div>
           <div>
             <h2 className="text-lg font-bold font-display text-primary-foreground">Coverage Analysis</h2>
-            <p className="text-xs text-primary-foreground/80">AI-powered test coverage validation</p>
+            <p className="text-xs text-primary-foreground/80">Optional post-delivery coverage review</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -125,9 +125,9 @@ export function CoverageReport({
           <div className="rounded-xl border border-primary/30 bg-primary/5 p-4">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <p className="text-sm font-semibold text-foreground">Convert coverage findings into complete testcases</p>
+                <p className="text-sm font-semibold text-foreground">Turn confirmed gaps into complete testcase rows</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Missing scenarios and testable recommendations become full AI-generated rows. Existing cases are preserved and duplicates are skipped.
+                  Create professional rows from missing scenarios and testable recommendations. Existing cases stay unchanged and duplicates are skipped.
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -140,7 +140,7 @@ export function CoverageReport({
                     className="gap-1.5"
                   >
                     <Sparkles className="h-4 w-4" />
-                    {isGeneratingImprovements ? 'Generating...' : 'Generate & Review All'}
+                    {isGeneratingImprovements ? 'Generating...' : 'Create for Review'}
                   </Button>
                 )}
                 {onAddAllImprovements && (
@@ -151,7 +151,7 @@ export function CoverageReport({
                     className="gap-1.5 gradient-primary hover:opacity-90"
                   >
                     <ListPlus className="h-4 w-4" />
-                    {isGeneratingImprovements ? 'Generating...' : 'Generate & Add All'}
+                    {isGeneratingImprovements ? 'Generating...' : 'Create & Add to Suite'}
                   </Button>
                 )}
               </div>

@@ -69,6 +69,9 @@ export function useTestCaseGenerator() {
         input,
         inputType,
         imagesBase64,
+      }, {
+        maxRetries: 2,
+        maxAttemptDurationForRetryMs: 45000,
       });
 
       const generated = data.testCases || [];

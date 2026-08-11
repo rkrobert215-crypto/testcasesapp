@@ -90,8 +90,6 @@ interface QualityGateSummary {
   detail: string;
 }
 
-const MAX_AUTOMATIC_QUALITY_PASSES = 3;
-
 async function requestCoverageImprovements(
   source: CoverageSourceContext,
   coverage: CoverageResult,
@@ -129,6 +127,38 @@ async function requestCoverageImprovements(
   };
 }
 
+async function requestConsolidatedCoverageImprovements(
+  source: CoverageSourceContext,
+  coverage: CoverageResult
+) {
+  const selection = selectCoverageImprovements(coverage);
+  if (selection.missingScenarios.length === 0 && selection.recommendations.length === 0) {
+    return { ...selection, additions: [] as TestCase[] };
+  }
+
+  const data = await invokeWithRetry(
+    'audit-test-cases',
+    {
+      requirement: source.input,
+      existingTestCases: source.testCases,
+      imagesBase64: source.imagesBase64,
+      focusMissingScenarios: selection.focusMissingScenarios,
+      focusRecommendations: selection.focusRecommendations,
+    },
+    {
+      maxRetries: 2,
+      baseDelay: 1500,
+      maxDelay: 10000,
+      maxAttemptDurationForRetryMs: 45000,
+    }
+  );
+
+  return {
+    ...selection,
+    additions: getUniqueAdditionalTestCases(source.testCases, data.testCases || []),
+  };
+}
+
 export default function Index() {
   const {
     isLoading,
@@ -143,7 +173,13 @@ export default function Index() {
   } = useTestCaseGenerator();
   const { history, loadHistoryEntry, saveToHistory, deleteEntry, clearHistory } = useLocalHistory();
   const { artifactHistory, saveArtifact, deleteArtifact, clearArtifacts } = useArtifactHistory();
-  const { isValidating, coverageResult, validateCoverage, clearCoverageResult } = useCoverageValidator();
+  const {
+    isValidating,
+    coverageResult,
+    validateCoverage,
+    clearCoverageResult,
+    publishCoverageResult,
+  } = useCoverageValidator();
   const { isProcessing, processMerge, diffData, clearDiff } = useSmartMerge();
   const { isAuditing, auditTestCases, clearAuditedTestCases } = useAuditEnhance();
   
@@ -185,52 +221,46 @@ export default function Index() {
     let finalSuite = generated;
 
     try {
-      updateGenerationStage('validating', 'Checking every requirement point against the initial testcase suite...');
-      let coverage = await validateCoverage(input, inputType, finalSuite, imagesBase64, { silent: true });
+      updateGenerationStage('validating', 'Running fast exact-requirement and technical-risk checks...');
+      let coverage = await validateCoverage(input, inputType, finalSuite, imagesBase64, {
+        silent: true,
+        deterministicOnly: true,
+        publishResult: false,
+      });
       if (!coverage) {
         throw new Error('Automatic coverage validation returned no result.');
       }
 
-      const initialMissingCount = coverage.missingScenarios.length;
-      const initialRecommendationCount = coverage.recommendations.length;
+      const initialSelection = selectCoverageImprovements(coverage);
+      const initialMissingCount = initialSelection.missingScenarios.length;
+      const initialRecommendationCount = initialSelection.recommendations.length;
+      const initialImprovementCount = initialMissingCount + initialRecommendationCount;
       let addedCount = 0;
-      let completedPasses = 0;
 
-      while (
-        countCoverageImprovementRequests(coverage) > 0 &&
-        completedPasses < MAX_AUTOMATIC_QUALITY_PASSES
-      ) {
+      if (initialImprovementCount > 0) {
         updateGenerationStage(
           'retrying',
-          `Quality pass ${completedPasses + 1}/${MAX_AUTOMATIC_QUALITY_PASSES}: converting ${coverage.missingScenarios.length} missing scenario${coverage.missingScenarios.length === 1 ? '' : 's'} and ${coverage.recommendations.length} recommendation${coverage.recommendations.length === 1 ? '' : 's'} into complete testcases...`
+          `Adding ${initialImprovementCount} verified missing coverage item${initialImprovementCount === 1 ? '' : 's'} in one consolidated quality pass...`
         );
-        const improvements = await requestCoverageImprovements(
+        const improvements = await requestConsolidatedCoverageImprovements(
           { input, inputType, imagesBase64, testCases: finalSuite },
-          coverage,
-          {},
-          (batchNumber, batchCount) => updateGenerationStage(
-            'retrying',
-            `Quality pass ${completedPasses + 1}/${MAX_AUTOMATIC_QUALITY_PASSES}: generating focused coverage batch ${batchNumber}/${batchCount}...`
-          )
+          coverage
         );
-        if (improvements.additions.length === 0) {
-          break;
+        if (improvements.additions.length > 0) {
+          finalSuite = mergeTestCasesPreservingExisting(finalSuite, improvements.additions);
+          addedCount = improvements.additions.length;
         }
-
-        finalSuite = mergeTestCasesPreservingExisting(finalSuite, improvements.additions);
-        addedCount += improvements.additions.length;
-        completedPasses += 1;
 
         updateGenerationStage(
           'validating',
-          `Rechecking the complete ${finalSuite.length}-testcase suite after quality pass ${completedPasses}...`
+          `Rechecking exact coverage across the complete ${finalSuite.length}-testcase suite...`
         );
         const recheckedCoverage = await validateCoverage(
           input,
           inputType,
           finalSuite,
           imagesBase64,
-          { silent: true }
+          { silent: true, deterministicOnly: true, publishResult: false }
         );
         if (!recheckedCoverage) {
           throw new Error('Automatic post-enhancement coverage validation returned no result.');
@@ -249,9 +279,9 @@ export default function Index() {
         setQualityGateSummary({
           status: 'passed',
           title: informationalNoteCount > 0
-            ? 'Automatic QA gate passed with clarification notes'
-            : 'Automatic QA gate passed',
-          detail: `Coverage checked at ${coverage.coverageScore}% with no missing scenarios or testable recommendations.${informationalNoteCount > 0 ? ` ${informationalNoteCount} non-testable clarification or process note${informationalNoteCount === 1 ? ' remains' : 's remain'} visible; no product behavior was fabricated.` : ''}`,
+            ? 'Fast QA gate passed with clarification notes'
+            : 'Fast QA gate passed',
+          detail: `The senior-QA generation and exact requirement checks found no missing executable behavior.${informationalNoteCount > 0 ? ` ${informationalNoteCount} non-testable clarification or process note${informationalNoteCount === 1 ? ' remains' : 's remain'} visible; no product behavior was fabricated.` : ''}`,
         });
       } else if (remainingImprovementCount === 0) {
         if (informationalNoteCount === 0) clearCoverageResult();
@@ -259,14 +289,14 @@ export default function Index() {
           status: 'improved',
           title: informationalNoteCount > 0
             ? 'Suite improved with clarification notes retained'
-            : 'Automatic QA gate improved the suite',
-          detail: `The first review found ${initialMissingCount} gap${initialMissingCount === 1 ? '' : 's'} and ${initialRecommendationCount} recommendation${initialRecommendationCount === 1 ? '' : 's'}. ${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added and the complete suite passed executable-gap revalidation.${informationalNoteCount > 0 ? ` ${informationalNoteCount} non-testable note${informationalNoteCount === 1 ? ' remains' : 's remain'} visible for human confirmation.` : ''}`,
+            : 'Fast QA gate improved the suite',
+          detail: `The exact check found ${initialMissingCount} gap${initialMissingCount === 1 ? '' : 's'} and ${initialRecommendationCount} testable recommendation${initialRecommendationCount === 1 ? '' : 's'}. One consolidated repair added ${addedCount} unique testcase${addedCount === 1 ? '' : 's'}, and the complete suite passed the fast recheck.${informationalNoteCount > 0 ? ` ${informationalNoteCount} non-testable note${informationalNoteCount === 1 ? ' remains' : 's remain'} visible for human confirmation.` : ''}`,
         });
       } else {
         setQualityGateSummary({
           status: 'attention',
           title: 'Automatic QA review completed with remaining items',
-          detail: `${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added across ${completedPasses} quality pass${completedPasses === 1 ? '' : 'es'}, but ${remainingSelection.missingScenarios.length} executable gap${remainingSelection.missingScenarios.length === 1 ? '' : 's'} and ${remainingSelection.recommendations.length} testable recommendation${remainingSelection.recommendations.length === 1 ? '' : 's'} still need review. They remain visible below and were not silently ignored.`,
+          detail: `${addedCount} unique testcase${addedCount === 1 ? ' was' : 's were'} added in one consolidated quality pass, but ${remainingSelection.missingScenarios.length} executable gap${remainingSelection.missingScenarios.length === 1 ? '' : 's'} and ${remainingSelection.recommendations.length} testable recommendation${remainingSelection.recommendations.length === 1 ? '' : 's'} still need review. They remain visible below and were not silently ignored.`,
         });
       }
 
@@ -274,9 +304,14 @@ export default function Index() {
         title: remainingImprovementCount > 0
           ? 'Reviewed suite ready with attention items'
           : addedCount > 0 ? 'Final reviewed suite ready' : 'Quality-checked suite ready',
-        description: `${finalSuite.length} testcases delivered after ${completedPasses} automatic enhancement pass${completedPasses === 1 ? '' : 'es'} and complete-suite revalidation${remainingImprovementCount > 0 ? `; ${remainingImprovementCount} review item${remainingImprovementCount === 1 ? ' remains' : 's remain'} visible` : ''}.`,
+        description: `${finalSuite.length} testcases delivered after senior-QA generation, a fast exact-requirement check${initialImprovementCount > 0 ? ', one consolidated repair, and one recheck' : ''}${remainingImprovementCount > 0 ? `; ${remainingImprovementCount} review item${remainingImprovementCount === 1 ? ' remains' : 's remain'} visible` : ''}.`,
         stageMessage: 'Final quality-checked testcases ready.',
       });
+      if (remainingImprovementCount > 0 || informationalNoteCount > 0) {
+        publishCoverageResult(coverage);
+      } else {
+        clearCoverageResult();
+      }
       saveToHistory(inputType, input, finalSuite, {
         inputSummary: `${input.slice(0, 80) || 'Full requirement'} - auto QA reviewed`,
         imagesBase64,
@@ -759,7 +794,7 @@ export default function Index() {
                       className="gap-2"
                     >
                       <Sparkles className="h-4 w-4" />
-                      {isGeneratingCoverageImprovements ? 'Generating...' : 'Generate & Review All'}
+                      {isGeneratingCoverageImprovements ? 'Generating...' : 'Create Gap Cases for Review'}
                     </Button>
                     <Button
                       size="sm"
@@ -768,7 +803,7 @@ export default function Index() {
                       className="gap-2 gradient-primary hover:opacity-90"
                     >
                       <ListPlus className="h-4 w-4" />
-                      {isGeneratingCoverageImprovements ? 'Generating...' : 'Generate & Add All'}
+                      {isGeneratingCoverageImprovements ? 'Generating...' : 'Create & Add Gap Cases'}
                     </Button>
                   </>
                 )}

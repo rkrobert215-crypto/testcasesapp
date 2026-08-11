@@ -4313,7 +4313,7 @@ function coverageGapsOverlap(left, right) {
   const unionSize = (/* @__PURE__ */ new Set([...leftTokens, ...rightTokens])).size;
   return overlap >= 2 && overlap / smallerSize >= 0.9 && overlap / unionSize >= 0.8;
 }
-function enforceCoverageBackstops(input, inputType, testCases, result) {
+function enforceCoverageBackstops(input, inputType, testCases, result, options = {}) {
   const nonExecutableAiScenarios = result.missingScenarios.filter(
     (item) => isNonTestableCoverageInstruction(item.scenario)
   );
@@ -4348,7 +4348,7 @@ function enforceCoverageBackstops(input, inputType, testCases, result) {
   const scoreCap = Math.max(25, 100 - missingScenarios.length * 4);
   const coverageScore = Math.min(reportedScore, scoreCap);
   const enforcedGapCount = enforcedExplicitGapCount + enforcedTechnicalGapCount;
-  const summary = enforcedGapCount > 0 ? `${result.summary} Independent rule checks added ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? "" : "s"} that the AI review did not report.` : result.summary;
+  const summary = enforcedGapCount > 0 ? options.deterministicOnly ? `Fast requirement checks found ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? "" : "s"} in the generated suite.` : `${result.summary} Independent rule checks added ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? "" : "s"} that the AI review did not report.` : result.summary;
   const recommendations = deduplicateCoverageRecommendations(
     [
       ...result.recommendations,
@@ -4392,6 +4392,21 @@ async function handleValidateCoverage(body) {
   const aiSettings = body.aiSettings;
   if (testCases.length === 0) {
     throw { ok: false, status: 400, errorText: "No test cases to validate" };
+  }
+  if (body.deterministicOnly === true) {
+    return enforceCoverageBackstops(
+      input,
+      inputType,
+      testCases,
+      {
+        coverageScore: 100,
+        summary: "Fast exact-requirement and technical-risk checks found no missing supported behavior.",
+        coveredAreas: [],
+        missingScenarios: [],
+        recommendations: []
+      },
+      { deterministicOnly: true }
+    );
   }
   const generationMode = getGenerationMode(aiSettings);
   const generationProfile = getGenerationModeProfile(generationMode);

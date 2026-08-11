@@ -1369,7 +1369,8 @@ function enforceCoverageBackstops(
   input: string,
   inputType: string,
   testCases: unknown[],
-  result: CoverageAnalysisResult
+  result: CoverageAnalysisResult,
+  options: { deterministicOnly?: boolean } = {}
 ): CoverageAnalysisResult {
   const nonExecutableAiScenarios = result.missingScenarios.filter((item) =>
     isNonTestableCoverageInstruction(item.scenario)
@@ -1413,7 +1414,9 @@ function enforceCoverageBackstops(
   const coverageScore = Math.min(reportedScore, scoreCap);
   const enforcedGapCount = enforcedExplicitGapCount + enforcedTechnicalGapCount;
   const summary = enforcedGapCount > 0
-    ? `${result.summary} Independent rule checks added ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? '' : 's'} that the AI review did not report.`
+    ? options.deterministicOnly
+      ? `Fast requirement checks found ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? '' : 's'} in the generated suite.`
+      : `${result.summary} Independent rule checks added ${enforcedGapCount} requirement-supported gap${enforcedGapCount === 1 ? '' : 's'} that the AI review did not report.`
     : result.summary;
   const recommendations = deduplicateCoverageRecommendations(
     [
@@ -1474,6 +1477,22 @@ async function handleValidateCoverage(body: Record<string, unknown>) {
 
   if (testCases.length === 0) {
     throw { ok: false, status: 400, errorText: 'No test cases to validate' } satisfies ProviderFailure;
+  }
+
+  if (body.deterministicOnly === true) {
+    return enforceCoverageBackstops(
+      input,
+      inputType,
+      testCases,
+      {
+        coverageScore: 100,
+        summary: 'Fast exact-requirement and technical-risk checks found no missing supported behavior.',
+        coveredAreas: [],
+        missingScenarios: [],
+        recommendations: [],
+      },
+      { deterministicOnly: true }
+    );
   }
 
   const generationMode = getGenerationMode(aiSettings);
