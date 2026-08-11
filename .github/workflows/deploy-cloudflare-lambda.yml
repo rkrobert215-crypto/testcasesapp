@@ -25,6 +25,54 @@ jobs:
       VITE_USE_VERCEL_AI_API: 'true'
 
     steps:
+      - name: Validate required deployment secrets
+        shell: bash
+        env:
+          AWS_GITHUB_ROLE_ARN: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          LAMBDA_PROXY_TOKEN: ${{ secrets.LAMBDA_PROXY_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          missing=()
+          required=(
+            AWS_GITHUB_ROLE_ARN
+            AWS_REGION
+            ECR_REPOSITORY
+            CLOUDFLARE_ACCOUNT_ID
+            CLOUDFLARE_API_TOKEN
+            APP_USERNAME
+            APP_PASSWORD
+            LAMBDA_PROXY_TOKEN
+            CLAUDE_CODE_OAUTH_TOKEN
+          )
+
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error title=Missing cloud deployment secrets::Add these GitHub Actions secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Validate Cloudflare API token
+        shell: bash
+        run: |
+          if ! response="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify)"; then
+            echo "::error title=Invalid Cloudflare API token::Create an active API token with Workers edit permission and update CLOUDFLARE_API_TOKEN."
+            exit 1
+          fi
+
+          if ! jq -e '.success == true and .result.status == "active"' <<<"$response" >/dev/null; then
+            echo "::error title=Invalid Cloudflare API token::Create an active API token with Workers edit permission and update CLOUDFLARE_API_TOKEN."
+            exit 1
+          fi
+
       - name: Checkout exact commit
         uses: actions/checkout@v4
 
