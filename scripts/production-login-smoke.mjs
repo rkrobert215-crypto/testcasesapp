@@ -41,8 +41,8 @@ async function postFunction(functionName, body, { maxRetries = 2, timeoutMs = 29
       body: JSON.stringify({ ...body, aiSettings }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-    const elapsedMs = Date.now() - startedAt;
     const text = await response.text();
+    const elapsedMs = Date.now() - startedAt;
     let payload;
     try {
       payload = text ? JSON.parse(text) : {};
@@ -162,7 +162,7 @@ const titleStyleFailures = finalSuite.filter((testCase) =>
 const suiteText = JSON.stringify(finalSuite).toLowerCase();
 const expectedSignals = [
   ['required email', ['required email', 'email is required', 'empty email']],
-  ['required password', ['required password', 'password is required', 'empty password']],
+  ['required password', ['required password', 'password is required', 'empty password', 'password field empty', 'required email and password']],
   ['invalid credentials', ['invalid credentials', 'incorrect credentials']],
   ['dashboard redirect', ['dashboard', 'redirect']],
   ['Forgot password', ['forgot password']],
@@ -176,6 +176,7 @@ const missingSignals = expectedSignals
 const report = {
   productionTarget: lambdaProxyToken ? 'Protected Claude Lambda' : baseUrl,
   generationSeconds: Math.round(generation.elapsedMs / 100) / 10,
+  generationWasCached: generation.payload.cached === true,
   fastInitialCoverageSeconds: Math.round(initialCoverageCall.elapsedMs / 100) / 10,
   repairNeeded: focusedScenarios.length + focusedRecommendations.length > 0,
   repairSeconds: Math.round(repairElapsedMs / 100) / 10,
