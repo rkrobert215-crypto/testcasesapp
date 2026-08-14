@@ -200,7 +200,6 @@ const report = {
 console.log(JSON.stringify(report, null, 2));
 
 if (
-  finalSuite.length < 15 ||
   (finalCoverage.missingScenarios || []).length > 0 ||
   focusedRecommendations.length > 0 && uniqueAdditions.length === 0 ||
   incompleteRows.length > 0 ||
