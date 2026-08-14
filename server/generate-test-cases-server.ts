@@ -53,7 +53,7 @@ const MAX_BODY_BYTES = 20 * 1024 * 1024;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_CACHE_SIZE = 50;
 const PROMPT_VERSION = 'qa-pro-node-v2';
-const AUDIT_CACHE_VERSION = 'audit-test-cases-2026-08-10-v3';
+const AUDIT_CACHE_VERSION = 'audit-test-cases-2026-08-14-v4';
 const COVERAGE_CACHE_VERSION = 'validate-coverage-2026-08-10-v4';
 const GENERATION_TIME_BUDGET_MS = 20 * 60 * 1000;
 const RETRY_STAGE_RESERVE_MS = 3 * 60 * 1000;
@@ -541,9 +541,8 @@ function buildClassicCoverageChecklist(input: string, insights: RequirementAnaly
     'For this form-style / CRUD-style requirement, behave like a classic strong manual QA and cover the feature more broadly.',
     'Explicitly include separate meaningful cases for: navigation entry, page title/breadcrumbs, default values, create success, duplicate handling, save-button enable/disable rules, cancel behavior, read-only behavior after creation, active/inactive downstream visibility, and description/data reflection where relevant.',
     'Also include practical derived QA cases for field boundaries and usability where relevant: maximum length, over-maximum length, valid special characters, whitespace handling, tab order, toggle persistence before save, and repeated sequential creation.',
-    'Do not drop these derived manual-testing cases merely because they are not written as explicit AC bullets when they are a natural tester-level extension of the requirement.',
-    'Keep distinct scenario clusters separate instead of merging them into a few broad cases.',
-    'For medium-complexity form requirements like this, target a broad senior-QA suite, usually around 30 to 35 test cases unless the requirement is truly tiny.',
+    'Add a derived manual-testing area only when the stated fields or workflow make it a credible risk; do not mechanically emit the whole checklist.',
+    'Keep distinct scenario clusters separate, but combine equivalent input-value permutations in testData when setup, action, outcome, post-condition, and failure impact are the same.',
   ];
 }
 
@@ -575,37 +574,6 @@ function detectPrimaryAction(input: string): string | null {
   return null;
 }
 
-function estimateMinimumTestCases(
-  inputType: InputType,
-  input: string,
-  insights: RequirementAnalysisResult | null
-) {
-  if (inputType === 'highlevel') {
-    return Math.max(10, Math.min(20, (insights?.acceptanceCriteria.length ?? 0) * 2 || 10));
-  }
-  if (inputType === 'testcase' || inputType === 'expected') {
-    return 1;
-  }
-
-  const bulletRegex = /^\s*[-*•]\s|^\s*\d+[.)]\s/;
-  const bulletLines = input.split('\n').filter((line) => bulletRegex.test(line)).length;
-  const paragraphCount = input.split(/\n\s*\n/).filter((paragraph) => paragraph.trim().length > 0).length;
-  const acCount = insights?.acceptanceCriteria.length ?? 0;
-  const formLike = isFormLikeRequirement(input, insights);
-  const hasAuthorities = extractAuthorities(input).length > 0;
-
-  let baseline = formLike ? 24 : 15;
-  if (bulletLines >= 5 || input.length > 1000 || paragraphCount >= 3) baseline = 20;
-  if (bulletLines >= 10 || input.length > 2000 || paragraphCount >= 6) baseline = 30;
-  if (bulletLines >= 15 || input.length > 3000) baseline = 40;
-  if (acCount > 0) baseline = Math.max(baseline, Math.min(70, acCount * 2));
-  if (formLike) baseline = Math.max(baseline, 28);
-  if (formLike && hasAuthorities) baseline = Math.max(baseline, 30);
-  if (formLike && (input.length > 1200 || acCount >= 8)) baseline = Math.max(baseline, 32);
-
-  return baseline;
-}
-
 function validateGeneratedCases(
   inputType: InputType,
   input: string,
@@ -617,11 +585,6 @@ function validateGeneratedCases(
   if (testCases.length === 0) {
     violations.push('No test cases were generated.');
     return { valid: false, violations };
-  }
-
-  const minimum = estimateMinimumTestCases(inputType, input, insights);
-  if (testCases.length < minimum) {
-    violations.push(`Generated only ${testCases.length} test cases, expected at least ${minimum} for this requirement size.`);
   }
 
   if (inputType !== 'testcase' && inputType !== 'expected') {
@@ -749,6 +712,8 @@ function buildInstructionText(
     'MANDATORY OUTPUT QUALITY RULES:',
     '- Read every line of the requirement and map each acceptance criteria point to one or more test cases.',
     '- Include both Positive and Negative scenarios where appropriate.',
+    '- Do not target or pad to a predetermined testcase count; cover each distinct supported behavior and risk once.',
+    '- Combine data-only permutations in testData when setup, action, outcome, post-condition, and failure impact are equivalent.',
     '- Do not invent roles, authorities, statuses, or features that are not in the requirement.',
     '- Make the suite read like a senior QA deliverable, not generic AI output.',
     '- Use practical business modules, priority, test data, and post-condition fields.',
@@ -791,8 +756,7 @@ function buildInstructionText(
       '- This is a form-style / CRUD-style requirement, so expand the suite the way a strong senior QA would.',
       '- Include separate practical cases for field validation, boundary length, duplicate handling, default values, save-button behavior, cancel/navigation behavior, and downstream data visibility where relevant.',
       '- If text or identifier fields are present, include realistic checks for max length, over-limit input, special characters, and leading/trailing spaces when those are meaningful to the requirement.',
-      '- Keep boundary and UI/navigation cases separate if they represent different real user risks.',
-      '- Target a fuller suite, typically around 28 to 35 cases for a medium-complexity form requirement unless the requirement is genuinely tiny.',
+      '- Keep boundary and UI/navigation cases separate if they represent different real user risks; combine boundaries that exercise the same rule and outcome in one data-driven row.',
     );
     lines.push(...buildClassicCoverageChecklist(input, insights).map((line) => `- ${line}`));
   }
@@ -990,13 +954,11 @@ function isReviewApproved(
 
 function scoreCandidate(
   validation: { valid: boolean; violations: string[] },
-  review: ReviewResult,
-  testCases: GeneratedTestCase[]
+  review: ReviewResult
 ) {
   return (
     review.qualityScore +
     (validation.valid ? 20 : 0) +
-    Math.min(testCases.length, 80) / 4 -
     validation.violations.length * 12 -
     review.coverageGaps.length * 5 -
     review.duplicateConcerns.length * 4 -
@@ -1115,6 +1077,9 @@ STRICT RULES:
 - Never turn process-only, documentation-only, or clarification advice into fabricated product behavior.
 - For event-driven persistence workflows, treat replay/concurrency idempotency, existing-state/timestamp preservation, uniqueness enforcement, tenant isolation, malformed data, non-interference, failure/retry, batch behavior, and downstream lifecycle as separate risks when supported by the requirement.
 - Every focused missing scenario and every testable recommendation must map to at least one returned testcase unless it is already covered by the existing suite.
+- A single testcase may close multiple overlapping findings. Return the minimum number of new rows needed for distinct risks.
+- Combine data-only permutations in testData when setup, action, expected outcome, post-condition, and failure impact are equivalent.
+- Keep separate rows when permissions, state transitions, messages, side effects, replay/concurrency behavior, or failure impact materially differ.
 
 GENERATION STYLE MODE: ${generationProfile.label}
 ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
@@ -1163,7 +1128,7 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
               `Coverage gaps to generate full testcase rows for:`,
               ...requestedCoverageGaps.map((gap, index) => `${index + 1}. ${gap}`),
               ``,
-              `Return only NEW testcase rows that cover these missing scenarios. Do not add unrelated extra cases.`,
+              `Return only the NEW testcase rows needed to cover these missing scenarios. One row may close overlapping findings; do not add unrelated or data-only duplicate cases.`,
             ]
           : []),
         ...(requestedCoverageRecommendations.length > 0
@@ -1171,7 +1136,7 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
               `Coverage recommendations to convert into professional testcase rows when testable:`,
               ...requestedCoverageRecommendations.map((recommendation, index) => `${index + 1}. ${recommendation}`),
               ``,
-              `For every testable recommendation, generate one or more complete executable testcase rows. Do not copy recommendation text into a testcase row, and do not fabricate behavior for process-only advice.`,
+              `Address every testable recommendation using the minimum complete executable testcase rows needed for distinct risks. One row may address overlapping recommendations. Do not copy recommendation text into a row or fabricate behavior for process-only advice.`,
             ]
           : []),
         ``,
@@ -1198,6 +1163,7 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
       'Check whether requirement references, module, priority, test data, and post-condition are meaningful.',
       'Check whether the testcase names, steps, and expected results read like strong senior-QA work.',
       'Check whether high-risk, negative, and edge gaps are covered rather than only happy-path improvements.',
+      'Check that the enhancement is right-sized: no repeated data permutations, no row-count padding, and no loss of materially distinct risks.',
       ...(requestedCoverageGaps.length > 0
         ? ['Check whether the returned cases directly address the requested missing coverage scenarios instead of drifting into unrelated additions.']
         : []),
@@ -1209,7 +1175,7 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
         : []),
     ],
     correctionReminder:
-      'Return only materially useful new cases that close real coverage gaps or implement testable recommendations and read like an enterprise-ready senior-QA enhancement set.',
+      'Return the minimum materially useful new cases that close every distinct real gap or testable recommendation and read like an enterprise-ready senior-QA enhancement set.',
   });
 
   const normalized = removeUnsupportedStrictTestCases(

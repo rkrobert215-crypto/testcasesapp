@@ -20,20 +20,31 @@ serve(async (req) => {
   }
 
   try {
-    const { requirement, imagesBase64, existingTestCases, focusMissingScenarios, aiSettings } = await req.json();
+    const {
+      requirement,
+      imagesBase64,
+      existingTestCases,
+      focusMissingScenarios,
+      focusRecommendations,
+      aiSettings,
+    } = await req.json();
 
     const trimmedRequirement = String(requirement ?? '').trim();
     const images = Array.isArray(imagesBase64) ? imagesBase64 : [];
     const requestedCoverageGaps = Array.isArray(focusMissingScenarios)
       ? focusMissingScenarios.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
       : [];
+    const requestedCoverageRecommendations = Array.isArray(focusRecommendations)
+      ? focusRecommendations.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      : [];
     const generationMode = getGenerationMode(aiSettings);
     const generationProfile = getGenerationModeProfile(generationMode);
     const cacheKey = images.length === 0
-      ? await computeRequestCacheKey('audit-test-cases', aiSettings, {
+      ? await computeRequestCacheKey('audit-test-cases-2026-08-14-v2', aiSettings, {
           requirement: trimmedRequirement,
           existingTestCases: existingTestCases ?? [],
           focusMissingScenarios: requestedCoverageGaps,
+          focusRecommendations: requestedCoverageRecommendations,
         })
       : null;
     if (cacheKey) {
@@ -63,6 +74,11 @@ STRICT RULES:
 - Use professional testcase naming, preferably actor-based.
 - Expected results must be concrete and observable.
 - Do not invent features that are not in the requirement.
+- Convert recommendations only when they describe verifiable product behavior or a real coverage need.
+- Every focused gap and testable recommendation must be covered unless the existing suite already covers it.
+- A single testcase may close overlapping findings. Return the minimum number of new rows needed for distinct risks.
+- Combine data-only permutations in testData when setup, action, expected outcome, post-condition, and failure impact are equivalent.
+- Keep separate rows when permissions, state transitions, messages, side effects, replay/concurrency behavior, or failure impact materially differ.
 
 GENERATION STYLE MODE: ${generationProfile.label}
 ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
@@ -104,7 +120,15 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
                 `Coverage gaps to generate full testcase rows for:`,
                 ...requestedCoverageGaps.map((gap, index) => `${index + 1}. ${gap}`),
                 ``,
-                `Return only NEW testcase rows that cover these missing scenarios. Do not add unrelated extra cases.`,
+                `Return only the NEW testcase rows needed to cover these missing scenarios. One row may close overlapping findings; do not add unrelated or data-only duplicate cases.`,
+              ]
+            : []),
+          ...(requestedCoverageRecommendations.length > 0
+            ? [
+                `Coverage recommendations to convert into professional testcase rows when testable:`,
+                ...requestedCoverageRecommendations.map((recommendation, index) => `${index + 1}. ${recommendation}`),
+                ``,
+                `Address every testable recommendation using the minimum complete executable rows needed for distinct risks. Do not fabricate behavior for process-only or clarification advice.`,
               ]
             : []),
           ``,
@@ -134,12 +158,16 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join('\n')}`;
         'Check whether requirement references, module, priority, test data, and post-condition are meaningful.',
         'Check whether the testcase names, steps, and expected results read like strong senior-QA work.',
         'Check whether high-risk, negative, and edge gaps are covered rather than only happy-path improvements.',
+        'Check that the enhancement is right-sized: no repeated data permutations, no row-count padding, and no loss of materially distinct risks.',
         ...(requestedCoverageGaps.length > 0
           ? ['Check whether the returned cases directly address the requested missing coverage scenarios instead of drifting into unrelated additions.']
           : []),
+        ...(requestedCoverageRecommendations.length > 0
+          ? ['Check whether each testable recommendation is addressed without turning process or clarification advice into product behavior.']
+          : []),
       ],
       correctionReminder:
-        'Return only materially useful new cases that close real coverage gaps and read like an enterprise-ready senior-QA enhancement set.',
+        'Return the minimum materially useful new cases that close every distinct real gap or testable recommendation and read like an enterprise-ready senior-QA enhancement set.',
     });
 
     const normalized = deduplicateGeneratedTestCases(normalizeGeneratedTestCases(parsed.testCases || []));

@@ -25,9 +25,12 @@ import {
 } from './generationMode.ts';
 import {
   buildTechnicalWorkflowCoverageChecklist,
-  detectTechnicalWorkflowSignals,
   findMissingTechnicalWorkflowCoverage,
 } from './technicalWorkflowCoverage.ts';
+import {
+  buildMissingExplicitRequirementScenarios,
+  requirementSupportsNegativeOutcome,
+} from './explicitRequirementCoverage.ts';
 
 export type InputType = 'requirement' | 'highlevel' | 'testcase' | 'scenario' | 'expected';
 export type UserPromptPart =
@@ -53,7 +56,7 @@ interface GeneratePipelineResult {
   cached?: boolean;
 }
 
-const GENERATE_CACHE_VERSION = 'generate-test-cases-2026-08-10-v10';
+const GENERATE_CACHE_VERSION = 'generate-test-cases-2026-08-14-v11';
 
 const INPUT_TYPE_PROMPTS: Record<InputType, string> = {
   requirement: `You are a senior QA engineer with 15+ years of manual testing experience.
@@ -70,7 +73,7 @@ STRICT RULES:
 - Do not invent roles or authorities that are not in the requirement.
 - Do not generate API-level penetration/security attack test cases.
 - The first test case must be the primary business action of the feature.
-- The number of test cases must scale with requirement complexity.
+- Let the number of test cases follow the distinct supported behaviors and risks; never pad to a preset count.
 - Every acceptance criteria point or derived requirement point must be covered.
 
 EXPECTED RESULT STYLE:
@@ -432,9 +435,8 @@ function buildClassicCoverageChecklist(input: string, insights: RequirementAnaly
     'For this form-style / CRUD-style requirement, behave like a classic strong manual QA and cover the feature more broadly.',
     'Explicitly include separate meaningful cases for: navigation entry, page title/breadcrumbs, default values, create success, duplicate handling, save-button enable/disable rules, cancel behavior, read-only behavior after creation, active/inactive downstream visibility, and description/data reflection where relevant.',
     'Also include practical derived QA cases for field boundaries and usability where relevant: maximum length, over-maximum length, valid special characters, whitespace handling, tab order, toggle persistence before save, and repeated sequential creation.',
-    'Do not drop these derived manual-testing cases merely because they are not written as explicit AC bullets when they are a natural tester-level extension of the requirement.',
-    'Keep distinct scenario clusters separate instead of merging them into a few broad cases.',
-    'For medium-complexity form requirements like this, target a broad senior-QA suite, usually around 30 to 35 test cases unless the requirement is truly tiny.',
+    'Add a derived manual-testing area only when the stated fields or workflow make it a credible risk; do not mechanically emit the whole checklist.',
+    'Keep distinct scenario clusters separate, but combine equivalent input-value permutations in testData when setup, action, outcome, post-condition, and failure impact are the same.',
   ];
 }
 
@@ -711,78 +713,6 @@ function detectPrimaryAction(input: string): string | null {
   return null;
 }
 
-function estimateMinimumTestCases(
-  inputType: InputType,
-  input: string,
-  insights: RequirementAnalysisResult | null,
-  strictRequirementMode = false
-) {
-  if (inputType === 'highlevel') {
-    return Math.max(10, Math.min(20, (insights?.acceptanceCriteria.length ?? 0) * 2 || 10));
-  }
-  if (inputType === 'testcase' || inputType === 'expected') {
-    return 1;
-  }
-
-  const bulletRegex = /^\s*[-*\u2022]\s|^\s*\d+[.)]\s/;
-  const normalizedInput = input.replaceAll('\u2022', '-');
-  const bulletLines = normalizedInput.split('\n').filter((line) => bulletRegex.test(line)).length;
-  const paragraphCount = input.split(/\n\s*\n/).filter((paragraph) => paragraph.trim().length > 0).length;
-  const acCount = insights?.acceptanceCriteria.length ?? 0;
-  const authorityCount = extractAuthorities(input).length;
-
-  if (strictRequirementMode) {
-    const explicitPointCount = Math.max(acCount, bulletLines, paragraphCount);
-    let baseline = explicitPointCount > 0 ? Math.max(6, Math.min(48, explicitPointCount * 2)) : 8;
-
-    if (input.length > 1200) baseline = Math.max(baseline, 12);
-    if (input.length > 2200) baseline = Math.max(baseline, 18);
-    if (authorityCount > 0) baseline = Math.max(baseline, Math.min(36, 6 + authorityCount * 3));
-    if (isConfigDrivenFilterRequirement(input, insights)) {
-      baseline = Math.max(baseline, Math.min(40, 10 + explicitPointCount * 2));
-    }
-    if (detectTechnicalWorkflowSignals(input).detected) {
-      baseline = Math.max(baseline, input.length > 1600 ? 34 : 28);
-    }
-
-    return baseline;
-  }
-
-  const formLike = isFormLikeRequirement(input, insights);
-  const hasAuthorities = authorityCount > 0;
-  const listLike = isListLikeRequirement(input, insights);
-  const onboardingLike = isOnboardingLikeRequirement(input, insights);
-  const sideEffectLike = isSideEffectRequirement(input, insights);
-  const multiActorLike = hasMultiActorSignals(input, insights);
-  const accessibilityLike = isAccessibilityRequirement(input, insights);
-  const responsiveLike = isResponsiveRequirement(input, insights);
-  const browserLike = isBrowserCompatibilityRequirement(input, insights);
-  const concurrencyLike = isConcurrencyRequirement(input, insights);
-  const performanceLike = isPerformanceRequirement(input, insights);
-  const apiDbLike = isApiDbRequirement(input, insights);
-
-  let baseline = formLike ? 24 : 15;
-  if (bulletLines >= 5 || input.length > 1000 || paragraphCount >= 3) baseline = 20;
-  if (bulletLines >= 10 || input.length > 2000 || paragraphCount >= 6) baseline = 30;
-  if (bulletLines >= 15 || input.length > 3000) baseline = 40;
-  if (acCount > 0) baseline = Math.max(baseline, Math.min(70, acCount * 2));
-  if (formLike) baseline = Math.max(baseline, 28);
-  if (formLike && hasAuthorities) baseline = Math.max(baseline, 30);
-  if (formLike && (input.length > 1200 || acCount >= 8)) baseline = Math.max(baseline, 32);
-  if (listLike) baseline = Math.max(baseline, 24);
-  if (onboardingLike) baseline = Math.max(baseline, 22);
-  if (sideEffectLike) baseline = Math.max(baseline, 22);
-  if (multiActorLike) baseline = Math.max(baseline, 22);
-  if (accessibilityLike) baseline = Math.max(baseline, 18);
-  if (responsiveLike) baseline = Math.max(baseline, 18);
-  if (browserLike) baseline = Math.max(baseline, 16);
-  if (concurrencyLike) baseline = Math.max(baseline, 18);
-  if (performanceLike) baseline = Math.max(baseline, 18);
-  if (apiDbLike) baseline = Math.max(baseline, 18);
-
-  return baseline;
-}
-
 export function validateGeneratedCases(
   inputType: InputType,
   input: string,
@@ -797,16 +727,25 @@ export function validateGeneratedCases(
     return { valid: false, violations };
   }
 
-  const minimum = estimateMinimumTestCases(inputType, input, insights, strictRequirementMode);
-  if (testCases.length < minimum) {
-    violations.push(`Generated only ${testCases.length} test cases, expected at least ${minimum} for this requirement size.`);
+  if (
+    inputType !== 'testcase' &&
+    inputType !== 'expected' &&
+    requirementSupportsNegativeOutcome(input)
+  ) {
+    const hasNegative = testCases.some((testCase) => testCase.type === 'Negative');
+    if (!hasNegative) {
+      violations.push('The requirement states a blocked, invalid, missing, failure, or other negative outcome, but the suite has no Negative testcase.');
+    }
   }
 
-  if (inputType !== 'testcase' && inputType !== 'expected') {
-    const hasPositive = testCases.some((testCase) => testCase.type === 'Positive');
-    const hasNegative = testCases.some((testCase) => testCase.type === 'Negative');
-    if (!hasPositive || !hasNegative) {
-      violations.push('Output must include both Positive and Negative test cases.');
+  if (inputType === 'requirement' || inputType === 'highlevel' || inputType === 'scenario') {
+    const missingExplicitCoverage = buildMissingExplicitRequirementScenarios(input, testCases);
+    if (missingExplicitCoverage.length > 0) {
+      violations.push(
+        `Explicit requirement coverage is missing: ${missingExplicitCoverage
+          .map((item) => item.scenario.replace(/^Verify this explicit requirement point with complete steps and observable results:\s*/i, ''))
+          .join(' | ')}.`
+      );
     }
   }
 
@@ -1131,6 +1070,9 @@ function buildInstructionText(
     '- Read every line of the requirement and map each acceptance criteria point to one or more test cases.',
     '- Every testcase must be traceable to explicit requirement text, an AC point, a stated permission/role, a stated UI action/state, a stated validation/negative path, or a directly stated user-visible outcome.',
     '- Include both Positive and Negative scenarios where the requirement supports success and blocked, invalid, unauthorized, or error outcomes.',
+    '- Do not target or pad to a predetermined testcase count. The correct size is the smallest suite that still covers every distinct supported behavior and risk.',
+    '- Use one testcase row for input or data permutations that share the same preconditions, action, expected behavior, post-condition, and failure impact; list representative values and boundaries in testData.',
+    '- Keep separate rows when permission outcomes, state transitions, user-visible messages, side effects, persistence effects, replay/concurrency behavior, or failure impact materially differ.',
     '- Do not invent roles, authorities, statuses, labels, screens, settings, or features that are not in the requirement.',
     '- Make the suite read like a senior QA deliverable, not generic AI output.',
     '- Use clean module, page, modal, popup, list, or details-view names instead of vague generic labels whenever the requirement supports a clearer name.',
@@ -1160,7 +1102,7 @@ function buildInstructionText(
   } else {
     lines.push(
       '- Include practical derived coverage beyond explicit AC wording when it is a natural manual-testing extension of the requirement.',
-      '- If a requirement supports additional realistic field-validation or UI-behavior coverage, include it instead of stopping at the minimum explicit AC count.',
+      '- If a requirement supports additional realistic field-validation or UI-behavior coverage, include the distinct risks without turning equivalent data permutations into separate rows.',
       '- When onboarding, account setup, or multi-actor behavior is present, keep role-specific and persisted-state coverage explicit.',
       '- When accessibility, responsive/mobile, concurrency, performance, or browser support is part of the requirement, keep those obligations explicit instead of implied.',
       '- When API or DB verification is part of the requirement, keep request/response, persistence, retry/failure, and rollback behavior explicit when relevant.'
@@ -1209,8 +1151,7 @@ function buildInstructionText(
         '- This is a form-style / CRUD-style requirement, so expand the suite the way a strong senior QA would.',
         '- Include separate practical cases for field validation, boundary length, duplicate handling, default values, save-button behavior, cancel/navigation behavior, and downstream data visibility where relevant.',
         '- If text or identifier fields are present, include realistic checks for max length, over-limit input, special characters, and leading/trailing spaces when those are meaningful to the requirement.',
-        '- Keep boundary and UI/navigation cases separate if they represent different real user risks.',
-        '- Target a fuller suite, typically around 28 to 35 cases for a medium-complexity form requirement unless the requirement is genuinely tiny.'
+        '- Keep boundary and UI/navigation cases separate if they represent different real user risks; combine boundaries that exercise the same rule and outcome in one data-driven row.'
       );
       lines.push(...buildClassicCoverageChecklist(input, insights).map((line) => `- ${line}`));
     }
@@ -1406,7 +1347,8 @@ export async function runGenerateTestCasePipeline({
           'MANDATORY INTERNAL PRINCIPAL-QA QUALITY GATE:',
           '- Privately map the raw requirement into atomic requirement points before drafting the suite.',
           '- Privately review the complete suite for traceability, exact-term fidelity, missing explicit behavior, unsupported assumptions, weak expected results, and semantic duplicates.',
-          '- Correct every meaningful gap before answering, without exposing the private analysis or reducing distinct coverage.',
+          '- Correct every meaningful gap before answering, without exposing the private analysis, padding the row count, or reducing distinct coverage.',
+          '- Consolidate data-only permutations and keep separate rows only for materially different setup, action, outcome, state change, side effect, or failure impact.',
           '- Return only the final structured testcase payload.',
         ]
       : []),
@@ -1533,17 +1475,19 @@ export async function runGenerateTestCasePipeline({
         'Treat idempotency replay/concurrency, existing-state preservation, uniqueness enforcement, tenant isolation, malformed source data, non-interference, failure/retry, batch behavior, and downstream lifecycle as supported when they are direct implications of the stated technical workflow.',
         'Remove unsupported generic CRUD, browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin-configuration scenarios.',
         'Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.',
+        'Consolidate input-value permutations into testData when their setup, action, expected outcome, post-condition, and failure impact are equivalent.',
         'Return only the structured testcase payload.',
       ].join('\n')
     : [
-        'The previous testcase suite is too weak or too compressed. Regenerate the FULL suite from scratch.',
+        'The previous testcase suite failed the QA quality gate. Regenerate the FULL, right-sized suite from scratch.',
         '',
         'Problems found:',
         ...firstValidation.violations.map((item, index) => `${index + 1}. ${item}`),
         '',
-        'Do not compress distinct meaningful checks into broad umbrella cases.',
-        'Expand the suite with classic senior manual-QA coverage where relevant: boundaries, duplicate handling, whitespace, special characters, navigation, breadcrumbs/title, tab order, default values, downstream visibility, side effects, and repeated execution.',
-        'Keep the suite broad and practical, closer to a classic strong QA export.',
+        'Do not compress distinct meaningful checks into broad umbrella cases, and do not create extra rows merely to increase quantity.',
+        'Add classic senior manual-QA coverage only where the requirement makes it relevant: boundaries, duplicate handling, whitespace, special characters, navigation, breadcrumbs/title, tab order, default values, downstream visibility, side effects, and repeated execution.',
+        'Consolidate data-only permutations into testData when their setup, action, expected outcome, post-condition, and failure impact are equivalent.',
+        'Keep the suite complete, practical, and proportionate to the supported risks.',
         'Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.',
         'Return only the structured testcase payload.',
       ].join('\n');
@@ -1573,9 +1517,7 @@ export async function runGenerateTestCasePipeline({
       ? attemptTwoCases
       : secondValidation.violations.length > firstValidation.violations.length
         ? attemptOneCases
-        : attemptTwoCases.length >= attemptOneCases.length
-          ? attemptTwoCases
-          : attemptOneCases;
+        : attemptTwoCases;
 
   if (resolvedCacheKey) {
     setCachedRequest(resolvedCacheKey, bestResult);

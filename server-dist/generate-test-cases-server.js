@@ -587,13 +587,14 @@ var GENERATION_MODE_PROFILES = {
       "Keep enterprise fields present, but make them concise, practical, and easy for a working QA team to use.",
       "Every generated testcase must trace back to explicit requirement wording, an AC point, a stated permission or role, a stated UI action, or a directly stated user-visible outcome.",
       "Do not add generic browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin/configuration scenarios unless the requirement explicitly names that obligation.",
-      "Do not compress distinct stated QA checks just to make the output shorter; prefer complete coverage of the stated requirement."
+      "Use one row per distinct stated behavior or risk; consolidate data-only permutations when setup, action, outcome, post-condition, and failure impact are equivalent."
     ],
     reviewerLines: [
       "Preserve Rob-style actor-based QA wording, especially clear permission-aware testcase titles.",
       "Flag cases that sound robotic, vague, or less precise than a clean senior manual-QA workbook.",
       "Approve only if the suite feels like strong senior-QA work while still sounding natural and crisp.",
-      "Flag cases that add unsupported browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin/configuration coverage outside the requirement."
+      "Flag cases that add unsupported browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin/configuration coverage outside the requirement.",
+      "Reject both padded suites and over-compressed suites; judge completeness by supported distinct-risk coverage rather than row count."
     ],
     reviewThreshold: 84,
     correctionReminder: "Keep the suite in a Rob-style QA voice while fixing coverage, naming, and quality gaps with clearer permission-aware titles and sharper expected results.",
@@ -609,7 +610,8 @@ var GENERATION_MODE_PROFILES = {
       "Make permission or authority distinctions explicit when they are part of the real behavior.",
       "Keep expected results short, direct, and immediately observable.",
       "Keep email, export, notification, and downstream-reflection outcomes explicit when they are part of the real flow.",
-      "Prefer complete stated-requirement gap coverage over compressed minimalist additions, but do not add scenario families unsupported by the requirement."
+      "Prefer complete stated-requirement gap coverage over compressed minimalist additions, but do not add scenario families unsupported by the requirement.",
+      "Generate the minimum new rows needed to close distinct gaps, combining equivalent data variants in testData."
     ],
     mergePromptLines: [
       "Preserve the clean tester voice of strong rows instead of over-formalizing everything.",
@@ -658,13 +660,14 @@ var GENERATION_MODE_PROFILES = {
       "When exports, notifications, email delivery, API-triggered changes, or background side effects are visible to the user or business flow, cover them as separate meaningful scenarios.",
       "Keep testcase titles professional and actor-based, but optimize more for complete functional coverage than for title polish alone.",
       "Separate positive, negative, edge, navigation, and UI-behavior scenarios when they represent different user risks.",
-      "Do not compress useful coverage just to make the output shorter; prefer better and more complete test cases."
+      "Keep every distinct user risk, but consolidate equivalent data permutations instead of treating quantity as quality."
     ],
     reviewerLines: [
       "Preserve Yuv-style breadth: module/page behavior, practical UI checks, and fuller scenario separation.",
       "Flag suites that miss list behavior, navigation, sorting, filtering, page/module context, or realistic negative paths.",
       "Approve only if the suite feels like a strong senior QA explored the feature end to end, not just the main AC bullets.",
-      "Reject over-compressed artifacts that merge distinct user risks into a few generic cases."
+      "Reject over-compressed artifacts that merge distinct user risks into a few generic cases.",
+      "Reject padding and repeated data variants that do not add a new setup, outcome, state transition, side effect, or failure impact."
     ],
     reviewThreshold: 86,
     correctionReminder: "Raise the suite to a Yuv-style QA standard with broader module-aware coverage, stronger UI/list/navigation coverage, and fuller positive/negative/edge separation.",
@@ -679,7 +682,8 @@ var GENERATION_MODE_PROFILES = {
       "Preserve distinct page/list/detail/table/sort/filter scenarios instead of merging them away.",
       "When list behavior is relevant, add the missing sort, filter, search, empty-state, row-click, and downstream-reflection cases instead of summarizing them broadly.",
       "When onboarding, settings, notifications, exports, or multi-actor flows are relevant, keep those scenario clusters separate instead of hiding them in generic rows.",
-      "Prefer complete gap coverage over compressed minimalist additions."
+      "Prefer complete gap coverage over compressed minimalist additions.",
+      "Use the fewest new rows that preserve those distinct scenario clusters; combine equivalent data variants in testData."
     ],
     mergePromptLines: [
       "Preserve meaningful scenario breadth when merging and keep module/page context clear.",
@@ -728,8 +732,8 @@ var GENERATION_MODE_PROFILES = {
       "When the requirement points to mobile or responsive behavior, cover desktop/tablet/mobile differences, truncation/overflow, and touch behavior explicitly.",
       "When the requirement points to concurrency, volume, or environment compatibility, cover multi-user conflicts, duplicate-submit protection, performance/loading behavior, and browser-specific differences explicitly.",
       "When export, API/network, or background actions are part of the requirement, keep both trigger behavior and reflected user/business outcomes explicit.",
-      "Keep testcase titles professional and actor-based, but prioritize complete benchmark-worthy coverage over minimal output.",
-      "Professional-quality benchmark mode means better and more complete test cases, not fewer ones."
+      "Keep testcase titles professional and actor-based, and measure benchmark quality by complete supported risk coverage rather than row count.",
+      "Use one row per distinct benchmark-relevant behavior; consolidate repeated input variants when their setup, action, and observable outcome are equivalent."
     ],
     reviewerLines: [
       "Review the suite against broad web-app QA benchmark expectations, not just explicit AC bullets.",
@@ -737,7 +741,8 @@ var GENERATION_MODE_PROFILES = {
       "Flag missing onboarding, settings, notification/email, export, API/network-reflection, and multi-actor coverage when the requirement supports them.",
       "Flag missing accessibility, responsive/mobile, concurrency, performance/large-data, deeper API/DB, or browser-compatibility coverage when the requirement supports them.",
       "Approve only if the suite feels benchmark-worthy for a modern web app and does not over-compress useful cases.",
-      "Reject suites that miss realistic permission, state, navigation, persistence, or user-message coverage."
+      "Reject suites that miss realistic permission, state, navigation, persistence, or user-message coverage.",
+      "Reject benchmark-checklist padding when a row adds no distinct requirement-supported behavior or risk."
     ],
     reviewThreshold: 88,
     correctionReminder: "Raise the artifact to SWAG benchmark quality with complete web-app QA coverage, explicit state/permission handling, and practical execution-ready detail.",
@@ -753,7 +758,8 @@ var GENERATION_MODE_PROFILES = {
       "Also fill missing benchmark-worthy gaps around onboarding, settings, notifications, emails, network/API reflection, and multi-actor flows when they are relevant.",
       "Also fill missing benchmark-worthy gaps around accessibility, responsive/mobile behavior, concurrency, performance/volume, browser compatibility, and deeper API/DB verification when they are relevant.",
       "Preserve distinct scenario clusters instead of merging them into broad umbrella rows.",
-      "Prefer complete benchmark coverage over minimalist additions."
+      "Prefer complete benchmark coverage over minimalist additions.",
+      "Generate only the rows needed for those distinct gaps and combine equivalent data permutations in testData."
     ],
     mergePromptLines: [
       "Preserve meaningful benchmark-level coverage when merging and do not merge away distinct UI, state, permission, or persistence risks.",
@@ -810,14 +816,15 @@ var GENERATION_MODE_PROFILES = {
       "When permissions or list/grid behavior are central to the feature, cover them with explicit, distinct cases rather than generic umbrella rows.",
       "When settings, onboarding, notifications, exports, or multi-actor outcomes are central to the feature, cover them with explicit, distinct cases rather than generic umbrella rows.",
       "Prefer risk-based, stakeholder-ready artifacts over generic checklist filler.",
-      "Professional standard does not mean fewer rows; prefer complete, useful, review-worthy coverage over over-compressed output."
+      "Professional standard means complete distinct-risk coverage without padding or over-compression; row count is not a quality target."
     ],
     reviewerLines: [
       "Be strict about traceability, coverage completeness, and enterprise field quality.",
       "Flag weak prioritization, vague test data, or missing post-conditions.",
       "Approve only if the suite reads like a formally reviewable senior-QA deliverable.",
       "Reject artifacts that feel generic, boilerplate-heavy, or weak on risk and business impact.",
-      "Reject over-compressed artifacts that remove meaningful validation, boundary, navigation, or risk coverage."
+      "Reject over-compressed artifacts that remove meaningful validation, boundary, navigation, or risk coverage.",
+      "Reject redundant rows that differ only by equivalent test data and add no new observable outcome or failure impact."
     ],
     reviewThreshold: 90,
     correctionReminder: "Raise the suite to a formal professional QA standard with stronger traceability, cleaner prioritization, and more audit-ready wording.",
@@ -831,7 +838,8 @@ var GENERATION_MODE_PROFILES = {
       "Make new gap-filling cases look formally reviewable and traceable to requirement points.",
       "Prioritize strong module assignment, priority, and enterprise field quality.",
       "Prefer risk-first gap filling rather than broad but shallow padding.",
-      "Do not trim away meaningful missing scenarios just to keep the enhancement set shorter."
+      "Do not trim away meaningful missing scenarios just to keep the enhancement set shorter.",
+      "Use the minimum number of new rows needed to close distinct gaps, with equivalent values consolidated in testData."
     ],
     mergePromptLines: [
       "Normalize the final suite into a consistent, professional, enterprise-ready format.",
@@ -1762,8 +1770,171 @@ function normalizeTitleForComparison(value) {
   return value.toLowerCase().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ").trim();
 }
 
+// supabase/functions/_shared/explicitRequirementCoverage.ts
+var HEADING_NAMES = /* @__PURE__ */ new Set([
+  "acceptance criteria",
+  "availability",
+  "availability / conditions",
+  "behavior",
+  "conditions",
+  "evaluation",
+  "permissions",
+  "rule evaluation",
+  "scope",
+  "story",
+  "supports",
+  "validation rules",
+  "works with"
+]);
+var REQUIREMENT_SIGNAL = /\b(can|must|shall|should|need to|needs to|only|except|ignored|ignore|defaults?|appears?|display(?:s|ed)?|creates?|updates?|preserves?|prevents?|allows?|supports?|applies?|evaluates?|clears?|deselects?|filters?|redirects?|sends?|shows?|saves?|uploads?|downloads?|requires?|cannot|does not|do not|if|when|after|before)\b/i;
+var NEGATIVE_SIGNAL = /\b(no|not|never|cannot|must not|does not|do not|disabled|invalid|empty|missing|required|malformed|unauthorized|forbidden|denied|blocked|rejected?|ignored|false|null|expired|timeout|except|without|failure|fails?|duplicate)\b/i;
+var BULLET_PREFIX = /^\s*(?:[-*\u2022]|\[(?: |x|X)?\]|\d+[.)])\s*/;
+var COVERAGE_STOP_WORDS = /* @__PURE__ */ new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "at",
+  "be",
+  "been",
+  "being",
+  "by",
+  "for",
+  "from",
+  "has",
+  "have",
+  "in",
+  "is",
+  "it",
+  "its",
+  "of",
+  "on",
+  "or",
+  "that",
+  "the",
+  "their",
+  "then",
+  "this",
+  "to",
+  "user",
+  "users",
+  "using",
+  "when",
+  "where",
+  "which",
+  "with"
+]);
+var GENERIC_TECHNICAL_ANCHORS = /* @__PURE__ */ new Set(["api", "db", "id", "qa", "tc", "ui"]);
+function cleanClause(value) {
+  return value.replace(BULLET_PREFIX, "").replace(/^acceptance criteria\s*:\s*/i, "").replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
+}
+function isHeading(value) {
+  const normalized = value.replace(/:$/, "").trim().toLowerCase();
+  return HEADING_NAMES.has(normalized) || value.endsWith(":") && value.split(/\s+/).length <= 8;
+}
+function normalizeToken(token) {
+  if (token.endsWith("ies") && token.length > 5) return `${token.slice(0, -3)}y`;
+  if (token.endsWith("ing") && token.length > 6) return token.slice(0, -3);
+  if (token.endsWith("ed") && token.length > 5) return token.slice(0, -2);
+  if (token.endsWith("s") && token.length > 4) return token.slice(0, -1);
+  return token;
+}
+function significantTokens(value) {
+  return new Set(
+    value.toLowerCase().replace(/[^a-z0-9_]+/g, " ").split(/\s+/).filter((token) => token.length > 1 && !COVERAGE_STOP_WORDS.has(token)).map(normalizeToken)
+  );
+}
+function distinctiveRequirementAnchors(value) {
+  const anchors = /* @__PURE__ */ new Set();
+  const patterns = [
+    /\b[A-Z][A-Z0-9_]{1,}\b/g,
+    /\b[a-z]+(?:[A-Z][a-zA-Z0-9]*)+\b/g,
+    /\b[A-Za-z0-9]+_[A-Za-z0-9_]+\b/g,
+    /\b\d+(?:\.\d+)?(?:\s*(?:milliseconds?|ms|seconds?|secs?|minutes?|mins?|hours?|days?|%))?\b/gi
+  ];
+  for (const pattern of patterns) {
+    for (const match of value.matchAll(pattern)) {
+      const anchor = match[0].toLowerCase().replace(/\s+/g, " ").trim();
+      if (!GENERIC_TECHNICAL_ANCHORS.has(anchor)) anchors.add(anchor);
+    }
+  }
+  for (const match of value.matchAll(/["'`]([^"'`]{2,80})["'`]/g)) {
+    const anchor = match[1].toLowerCase().replace(/\s+/g, " ").trim();
+    if (anchor.split(/\s+/).length <= 6) anchors.add(anchor);
+  }
+  return [...anchors];
+}
+function rowContainsAnchor(row, anchor) {
+  const normalizedRow = row.toLowerCase().replace(/\s+/g, " ");
+  const escapedAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^a-z0-9_])${escapedAnchor}(?:$|[^a-z0-9_])`, "i").test(normalizedRow);
+}
+function clauseIsCovered(clause, suiteRows) {
+  const clauseTokens = significantTokens(clause);
+  const requiresNegativeEvidence = NEGATIVE_SIGNAL.test(clause);
+  if (clauseTokens.size === 0) return true;
+  const anchors = distinctiveRequirementAnchors(clause);
+  const anchorsCovered = anchors.every(
+    (anchor) => suiteRows.some((row) => {
+      if (!rowContainsAnchor(row, anchor)) return false;
+      const rowTokens = significantTokens(row);
+      let contextualOverlap = 0;
+      for (const token of clauseTokens) {
+        if (rowTokens.has(token)) contextualOverlap += 1;
+      }
+      return contextualOverlap >= Math.min(2, clauseTokens.size);
+    })
+  );
+  if (!anchorsCovered) return false;
+  return suiteRows.some((row) => {
+    if (requiresNegativeEvidence && !NEGATIVE_SIGNAL.test(row)) return false;
+    const rowTokens = significantTokens(row);
+    let overlap = 0;
+    for (const token of clauseTokens) {
+      if (rowTokens.has(token)) overlap += 1;
+    }
+    const requiredOverlap = clauseTokens.size <= 3 ? Math.min(2, clauseTokens.size) : Math.max(3, Math.ceil(clauseTokens.size * 0.5));
+    return overlap >= requiredOverlap;
+  });
+}
+function extractExplicitRequirementClauses(input) {
+  const clauses = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const rawLine of input.replaceAll("\r", "").split("\n")) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("```") || isHeading(trimmed)) continue;
+    const hasBullet = BULLET_PREFIX.test(trimmed);
+    const candidates = hasBullet ? [trimmed] : trimmed.split(/(?<=[.!?])\s+/);
+    for (const candidate of candidates) {
+      const cleaned = cleanClause(candidate);
+      if (cleaned.length < 8 || cleaned.length > 320) continue;
+      if (!hasBullet && !REQUIREMENT_SIGNAL.test(cleaned)) continue;
+      if (/^(insert into|values\s*\(|on duplicate key update)/i.test(cleaned)) continue;
+      const key = cleaned.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        clauses.push(cleaned);
+      }
+    }
+  }
+  return clauses.slice(0, 40);
+}
+function requirementSupportsNegativeOutcome(input) {
+  const clauses = extractExplicitRequirementClauses(input);
+  return (clauses.length > 0 ? clauses : [input]).some((clause) => NEGATIVE_SIGNAL.test(clause));
+}
+function buildMissingExplicitRequirementScenarios(input, testCases) {
+  const suiteRows = testCases.map((testCase) => JSON.stringify(testCase));
+  return extractExplicitRequirementClauses(input).filter((clause) => !clauseIsCovered(clause, suiteRows)).map((clause) => ({
+    scenario: `Verify this explicit requirement point with complete steps and observable results: ${clause}`,
+    priority: NEGATIVE_SIGNAL.test(clause) ? "High" : "Medium",
+    type: NEGATIVE_SIGNAL.test(clause) ? "Negative" : "Positive"
+  }));
+}
+
 // supabase/functions/_shared/generateTestCasePipeline.ts
-var GENERATE_CACHE_VERSION = "generate-test-cases-2026-08-10-v10";
+var GENERATE_CACHE_VERSION = "generate-test-cases-2026-08-14-v11";
 var INPUT_TYPE_PROMPTS = {
   requirement: `You are a senior QA engineer with 15+ years of manual testing experience.
 
@@ -1779,7 +1950,7 @@ STRICT RULES:
 - Do not invent roles or authorities that are not in the requirement.
 - Do not generate API-level penetration/security attack test cases.
 - The first test case must be the primary business action of the feature.
-- The number of test cases must scale with requirement complexity.
+- Let the number of test cases follow the distinct supported behaviors and risks; never pad to a preset count.
 - Every acceptance criteria point or derived requirement point must be covered.
 
 EXPECTED RESULT STYLE:
@@ -2099,9 +2270,8 @@ function buildClassicCoverageChecklist(input, insights) {
     "For this form-style / CRUD-style requirement, behave like a classic strong manual QA and cover the feature more broadly.",
     "Explicitly include separate meaningful cases for: navigation entry, page title/breadcrumbs, default values, create success, duplicate handling, save-button enable/disable rules, cancel behavior, read-only behavior after creation, active/inactive downstream visibility, and description/data reflection where relevant.",
     "Also include practical derived QA cases for field boundaries and usability where relevant: maximum length, over-maximum length, valid special characters, whitespace handling, tab order, toggle persistence before save, and repeated sequential creation.",
-    "Do not drop these derived manual-testing cases merely because they are not written as explicit AC bullets when they are a natural tester-level extension of the requirement.",
-    "Keep distinct scenario clusters separate instead of merging them into a few broad cases.",
-    "For medium-complexity form requirements like this, target a broad senior-QA suite, usually around 30 to 35 test cases unless the requirement is truly tiny."
+    "Add a derived manual-testing area only when the stated fields or workflow make it a credible risk; do not mechanically emit the whole checklist.",
+    "Keep distinct scenario clusters separate, but combine equivalent input-value permutations in testData when setup, action, outcome, post-condition, and failure impact are the same."
   ];
 }
 function buildListCoverageChecklist(input, insights) {
@@ -2354,80 +2524,24 @@ function detectPrimaryAction(input) {
   }
   return null;
 }
-function estimateMinimumTestCases(inputType, input, insights, strictRequirementMode = false) {
-  if (inputType === "highlevel") {
-    return Math.max(10, Math.min(20, (insights?.acceptanceCriteria.length ?? 0) * 2 || 10));
-  }
-  if (inputType === "testcase" || inputType === "expected") {
-    return 1;
-  }
-  const bulletRegex = /^\s*[-*\u2022]\s|^\s*\d+[.)]\s/;
-  const normalizedInput = input.replaceAll("\u2022", "-");
-  const bulletLines = normalizedInput.split("\n").filter((line) => bulletRegex.test(line)).length;
-  const paragraphCount = input.split(/\n\s*\n/).filter((paragraph) => paragraph.trim().length > 0).length;
-  const acCount = insights?.acceptanceCriteria.length ?? 0;
-  const authorityCount = extractAuthorities(input).length;
-  if (strictRequirementMode) {
-    const explicitPointCount = Math.max(acCount, bulletLines, paragraphCount);
-    let baseline2 = explicitPointCount > 0 ? Math.max(6, Math.min(48, explicitPointCount * 2)) : 8;
-    if (input.length > 1200) baseline2 = Math.max(baseline2, 12);
-    if (input.length > 2200) baseline2 = Math.max(baseline2, 18);
-    if (authorityCount > 0) baseline2 = Math.max(baseline2, Math.min(36, 6 + authorityCount * 3));
-    if (isConfigDrivenFilterRequirement(input, insights)) {
-      baseline2 = Math.max(baseline2, Math.min(40, 10 + explicitPointCount * 2));
-    }
-    if (detectTechnicalWorkflowSignals(input).detected) {
-      baseline2 = Math.max(baseline2, input.length > 1600 ? 34 : 28);
-    }
-    return baseline2;
-  }
-  const formLike = isFormLikeRequirement(input, insights);
-  const hasAuthorities = authorityCount > 0;
-  const listLike = isListLikeRequirement(input, insights);
-  const onboardingLike = isOnboardingLikeRequirement(input, insights);
-  const sideEffectLike = isSideEffectRequirement(input, insights);
-  const multiActorLike = hasMultiActorSignals(input, insights);
-  const accessibilityLike = isAccessibilityRequirement(input, insights);
-  const responsiveLike = isResponsiveRequirement(input, insights);
-  const browserLike = isBrowserCompatibilityRequirement(input, insights);
-  const concurrencyLike = isConcurrencyRequirement(input, insights);
-  const performanceLike = isPerformanceRequirement(input, insights);
-  const apiDbLike = isApiDbRequirement(input, insights);
-  let baseline = formLike ? 24 : 15;
-  if (bulletLines >= 5 || input.length > 1e3 || paragraphCount >= 3) baseline = 20;
-  if (bulletLines >= 10 || input.length > 2e3 || paragraphCount >= 6) baseline = 30;
-  if (bulletLines >= 15 || input.length > 3e3) baseline = 40;
-  if (acCount > 0) baseline = Math.max(baseline, Math.min(70, acCount * 2));
-  if (formLike) baseline = Math.max(baseline, 28);
-  if (formLike && hasAuthorities) baseline = Math.max(baseline, 30);
-  if (formLike && (input.length > 1200 || acCount >= 8)) baseline = Math.max(baseline, 32);
-  if (listLike) baseline = Math.max(baseline, 24);
-  if (onboardingLike) baseline = Math.max(baseline, 22);
-  if (sideEffectLike) baseline = Math.max(baseline, 22);
-  if (multiActorLike) baseline = Math.max(baseline, 22);
-  if (accessibilityLike) baseline = Math.max(baseline, 18);
-  if (responsiveLike) baseline = Math.max(baseline, 18);
-  if (browserLike) baseline = Math.max(baseline, 16);
-  if (concurrencyLike) baseline = Math.max(baseline, 18);
-  if (performanceLike) baseline = Math.max(baseline, 18);
-  if (apiDbLike) baseline = Math.max(baseline, 18);
-  return baseline;
-}
 function validateGeneratedCases(inputType, input, testCases, insights, strictRequirementMode) {
   const violations = [];
   if (testCases.length === 0) {
     violations.push("No test cases were generated.");
     return { valid: false, violations };
   }
-  const minimum = estimateMinimumTestCases(inputType, input, insights, strictRequirementMode);
-  if (testCases.length < minimum) {
-    violations.push(`Generated only ${testCases.length} test cases, expected at least ${minimum} for this requirement size.`);
-  }
-  if (inputType !== "testcase" && inputType !== "expected") {
-    const hasPositive = testCases.some((testCase) => testCase.type === "Positive");
+  if (inputType !== "testcase" && inputType !== "expected" && requirementSupportsNegativeOutcome(input)) {
     const hasNegative = testCases.some((testCase) => testCase.type === "Negative");
-    if (!hasPositive || !hasNegative) {
-      violations.push("Output must include both Positive and Negative test cases.");
+    if (!hasNegative) {
+      violations.push("The requirement states a blocked, invalid, missing, failure, or other negative outcome, but the suite has no Negative testcase.");
+    }
+  }
+  if (inputType === "requirement" || inputType === "highlevel" || inputType === "scenario") {
+    const missingExplicitCoverage = buildMissingExplicitRequirementScenarios(input, testCases);
+    if (missingExplicitCoverage.length > 0) {
+      violations.push(
+        `Explicit requirement coverage is missing: ${missingExplicitCoverage.map((item) => item.scenario.replace(/^Verify this explicit requirement point with complete steps and observable results:\s*/i, "")).join(" | ")}.`
+      );
     }
   }
   const missingEnterpriseFields = testCases.filter(
@@ -2675,6 +2789,9 @@ function buildInstructionText(input, images, inputType, insights, generationMode
     "- Read every line of the requirement and map each acceptance criteria point to one or more test cases.",
     "- Every testcase must be traceable to explicit requirement text, an AC point, a stated permission/role, a stated UI action/state, a stated validation/negative path, or a directly stated user-visible outcome.",
     "- Include both Positive and Negative scenarios where the requirement supports success and blocked, invalid, unauthorized, or error outcomes.",
+    "- Do not target or pad to a predetermined testcase count. The correct size is the smallest suite that still covers every distinct supported behavior and risk.",
+    "- Use one testcase row for input or data permutations that share the same preconditions, action, expected behavior, post-condition, and failure impact; list representative values and boundaries in testData.",
+    "- Keep separate rows when permission outcomes, state transitions, user-visible messages, side effects, persistence effects, replay/concurrency behavior, or failure impact materially differ.",
     "- Do not invent roles, authorities, statuses, labels, screens, settings, or features that are not in the requirement.",
     "- Make the suite read like a senior QA deliverable, not generic AI output.",
     "- Use clean module, page, modal, popup, list, or details-view names instead of vague generic labels whenever the requirement supports a clearer name.",
@@ -2703,7 +2820,7 @@ function buildInstructionText(input, images, inputType, insights, generationMode
   } else {
     lines.push(
       "- Include practical derived coverage beyond explicit AC wording when it is a natural manual-testing extension of the requirement.",
-      "- If a requirement supports additional realistic field-validation or UI-behavior coverage, include it instead of stopping at the minimum explicit AC count.",
+      "- If a requirement supports additional realistic field-validation or UI-behavior coverage, include the distinct risks without turning equivalent data permutations into separate rows.",
       "- When onboarding, account setup, or multi-actor behavior is present, keep role-specific and persisted-state coverage explicit.",
       "- When accessibility, responsive/mobile, concurrency, performance, or browser support is part of the requirement, keep those obligations explicit instead of implied.",
       "- When API or DB verification is part of the requirement, keep request/response, persistence, retry/failure, and rollback behavior explicit when relevant."
@@ -2750,8 +2867,7 @@ function buildInstructionText(input, images, inputType, insights, generationMode
         "- This is a form-style / CRUD-style requirement, so expand the suite the way a strong senior QA would.",
         "- Include separate practical cases for field validation, boundary length, duplicate handling, default values, save-button behavior, cancel/navigation behavior, and downstream data visibility where relevant.",
         "- If text or identifier fields are present, include realistic checks for max length, over-limit input, special characters, and leading/trailing spaces when those are meaningful to the requirement.",
-        "- Keep boundary and UI/navigation cases separate if they represent different real user risks.",
-        "- Target a fuller suite, typically around 28 to 35 cases for a medium-complexity form requirement unless the requirement is genuinely tiny."
+        "- Keep boundary and UI/navigation cases separate if they represent different real user risks; combine boundaries that exercise the same rule and outcome in one data-driven row."
       );
       lines.push(...buildClassicCoverageChecklist(input, insights).map((line) => `- ${line}`));
     }
@@ -2898,7 +3014,8 @@ async function runGenerateTestCasePipeline({
       "MANDATORY INTERNAL PRINCIPAL-QA QUALITY GATE:",
       "- Privately map the raw requirement into atomic requirement points before drafting the suite.",
       "- Privately review the complete suite for traceability, exact-term fidelity, missing explicit behavior, unsupported assumptions, weak expected results, and semantic duplicates.",
-      "- Correct every meaningful gap before answering, without exposing the private analysis or reducing distinct coverage.",
+      "- Correct every meaningful gap before answering, without exposing the private analysis, padding the row count, or reducing distinct coverage.",
+      "- Consolidate data-only permutations and keep separate rows only for materially different setup, action, outcome, state change, side effect, or failure impact.",
       "- Return only the final structured testcase payload."
     ] : []
   ].join("\n");
@@ -2984,16 +3101,18 @@ async function runGenerateTestCasePipeline({
     "Treat idempotency replay/concurrency, existing-state preservation, uniqueness enforcement, tenant isolation, malformed source data, non-interference, failure/retry, batch behavior, and downstream lifecycle as supported when they are direct implications of the stated technical workflow.",
     "Remove unsupported generic CRUD, browser, responsive, API/DB, performance, concurrency, accessibility, security, or admin-configuration scenarios.",
     "Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.",
+    "Consolidate input-value permutations into testData when their setup, action, expected outcome, post-condition, and failure impact are equivalent.",
     "Return only the structured testcase payload."
   ].join("\n") : [
-    "The previous testcase suite is too weak or too compressed. Regenerate the FULL suite from scratch.",
+    "The previous testcase suite failed the QA quality gate. Regenerate the FULL, right-sized suite from scratch.",
     "",
     "Problems found:",
     ...firstValidation.violations.map((item, index) => `${index + 1}. ${item}`),
     "",
-    "Do not compress distinct meaningful checks into broad umbrella cases.",
-    "Expand the suite with classic senior manual-QA coverage where relevant: boundaries, duplicate handling, whitespace, special characters, navigation, breadcrumbs/title, tab order, default values, downstream visibility, side effects, and repeated execution.",
-    "Keep the suite broad and practical, closer to a classic strong QA export.",
+    "Do not compress distinct meaningful checks into broad umbrella cases, and do not create extra rows merely to increase quantity.",
+    "Add classic senior manual-QA coverage only where the requirement makes it relevant: boundaries, duplicate handling, whitespace, special characters, navigation, breadcrumbs/title, tab order, default values, downstream visibility, side effects, and repeated execution.",
+    "Consolidate data-only permutations into testData when their setup, action, expected outcome, post-condition, and failure impact are equivalent.",
+    "Keep the suite complete, practical, and proportionate to the supported risks.",
     "Remove semantic duplicates only when they repeat the same setup, action, and expected outcome; preserve every distinct requirement risk.",
     "Return only the structured testcase payload."
   ].join("\n");
@@ -3015,170 +3134,11 @@ async function runGenerateTestCasePipeline({
     requirementInsights,
     strictRequirementMode
   );
-  const bestResult = secondValidation.valid ? attemptTwoCases : secondValidation.violations.length < firstValidation.violations.length ? attemptTwoCases : secondValidation.violations.length > firstValidation.violations.length ? attemptOneCases : attemptTwoCases.length >= attemptOneCases.length ? attemptTwoCases : attemptOneCases;
+  const bestResult = secondValidation.valid ? attemptTwoCases : secondValidation.violations.length < firstValidation.violations.length ? attemptTwoCases : secondValidation.violations.length > firstValidation.violations.length ? attemptOneCases : attemptTwoCases;
   if (resolvedCacheKey) {
     setCachedRequest(resolvedCacheKey, bestResult);
   }
   return { testCases: bestResult };
-}
-
-// supabase/functions/_shared/explicitRequirementCoverage.ts
-var HEADING_NAMES = /* @__PURE__ */ new Set([
-  "acceptance criteria",
-  "availability",
-  "availability / conditions",
-  "behavior",
-  "conditions",
-  "evaluation",
-  "permissions",
-  "rule evaluation",
-  "scope",
-  "story",
-  "supports",
-  "validation rules",
-  "works with"
-]);
-var REQUIREMENT_SIGNAL = /\b(must|shall|should|need to|needs to|only|except|ignored|ignore|defaults?|appears?|display(?:s|ed)?|creates?|updates?|preserves?|prevents?|allows?|supports?|applies?|evaluates?|clears?|deselects?|filters?|redirects?|sends?|shows?|requires?|cannot|does not|do not|if|when|after|before)\b/i;
-var NEGATIVE_SIGNAL = /\b(no|not|never|cannot|must not|does not|do not|disabled|invalid|missing|malformed|unauthorized|forbidden|ignored|false|except|without|failure|fails?|duplicate)\b/i;
-var BULLET_PREFIX = /^\s*(?:[-*\u2022]|\[(?: |x|X)?\]|\d+[.)])\s*/;
-var COVERAGE_STOP_WORDS = /* @__PURE__ */ new Set([
-  "a",
-  "an",
-  "and",
-  "are",
-  "as",
-  "at",
-  "be",
-  "been",
-  "being",
-  "by",
-  "for",
-  "from",
-  "has",
-  "have",
-  "in",
-  "is",
-  "it",
-  "its",
-  "of",
-  "on",
-  "or",
-  "that",
-  "the",
-  "their",
-  "then",
-  "this",
-  "to",
-  "user",
-  "users",
-  "using",
-  "when",
-  "where",
-  "which",
-  "with"
-]);
-var GENERIC_TECHNICAL_ANCHORS = /* @__PURE__ */ new Set(["api", "db", "id", "qa", "tc", "ui"]);
-function cleanClause(value) {
-  return value.replace(BULLET_PREFIX, "").replace(/^acceptance criteria\s*:\s*/i, "").replace(/\s+/g, " ").trim().replace(/[.;]+$/, "");
-}
-function isHeading(value) {
-  const normalized = value.replace(/:$/, "").trim().toLowerCase();
-  return HEADING_NAMES.has(normalized) || value.endsWith(":") && value.split(/\s+/).length <= 8;
-}
-function normalizeToken(token) {
-  if (token.endsWith("ies") && token.length > 5) return `${token.slice(0, -3)}y`;
-  if (token.endsWith("ing") && token.length > 6) return token.slice(0, -3);
-  if (token.endsWith("ed") && token.length > 5) return token.slice(0, -2);
-  if (token.endsWith("s") && token.length > 4) return token.slice(0, -1);
-  return token;
-}
-function significantTokens(value) {
-  return new Set(
-    value.toLowerCase().replace(/[^a-z0-9_]+/g, " ").split(/\s+/).filter((token) => token.length > 1 && !COVERAGE_STOP_WORDS.has(token)).map(normalizeToken)
-  );
-}
-function distinctiveRequirementAnchors(value) {
-  const anchors = /* @__PURE__ */ new Set();
-  const patterns = [
-    /\b[A-Z][A-Z0-9_]{1,}\b/g,
-    /\b[a-z]+(?:[A-Z][a-zA-Z0-9]*)+\b/g,
-    /\b[A-Za-z0-9]+_[A-Za-z0-9_]+\b/g,
-    /\b\d+(?:\.\d+)?(?:\s*(?:milliseconds?|ms|seconds?|secs?|minutes?|mins?|hours?|days?|%))?\b/gi
-  ];
-  for (const pattern of patterns) {
-    for (const match of value.matchAll(pattern)) {
-      const anchor = match[0].toLowerCase().replace(/\s+/g, " ").trim();
-      if (!GENERIC_TECHNICAL_ANCHORS.has(anchor)) anchors.add(anchor);
-    }
-  }
-  for (const match of value.matchAll(/["'`]([^"'`]{2,80})["'`]/g)) {
-    const anchor = match[1].toLowerCase().replace(/\s+/g, " ").trim();
-    if (anchor.split(/\s+/).length <= 6) anchors.add(anchor);
-  }
-  return [...anchors];
-}
-function rowContainsAnchor(row, anchor) {
-  const normalizedRow = row.toLowerCase().replace(/\s+/g, " ");
-  const escapedAnchor = anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[^a-z0-9_])${escapedAnchor}(?:$|[^a-z0-9_])`, "i").test(normalizedRow);
-}
-function clauseIsCovered(clause, suiteRows) {
-  const clauseTokens = significantTokens(clause);
-  const requiresNegativeEvidence = NEGATIVE_SIGNAL.test(clause);
-  if (clauseTokens.size === 0) return true;
-  const anchors = distinctiveRequirementAnchors(clause);
-  const anchorsCovered = anchors.every(
-    (anchor) => suiteRows.some((row) => {
-      if (!rowContainsAnchor(row, anchor)) return false;
-      const rowTokens = significantTokens(row);
-      let contextualOverlap = 0;
-      for (const token of clauseTokens) {
-        if (rowTokens.has(token)) contextualOverlap += 1;
-      }
-      return contextualOverlap >= Math.min(2, clauseTokens.size);
-    })
-  );
-  if (!anchorsCovered) return false;
-  return suiteRows.some((row) => {
-    if (requiresNegativeEvidence && !NEGATIVE_SIGNAL.test(row)) return false;
-    const rowTokens = significantTokens(row);
-    let overlap = 0;
-    for (const token of clauseTokens) {
-      if (rowTokens.has(token)) overlap += 1;
-    }
-    const requiredOverlap = clauseTokens.size <= 3 ? Math.min(2, clauseTokens.size) : Math.max(3, Math.ceil(clauseTokens.size * 0.5));
-    return overlap >= requiredOverlap;
-  });
-}
-function extractExplicitRequirementClauses(input) {
-  const clauses = [];
-  const seen = /* @__PURE__ */ new Set();
-  for (const rawLine of input.replaceAll("\r", "").split("\n")) {
-    const trimmed = rawLine.trim();
-    if (!trimmed || trimmed.startsWith("```") || isHeading(trimmed)) continue;
-    const hasBullet = BULLET_PREFIX.test(trimmed);
-    const candidates = hasBullet ? [trimmed] : trimmed.split(/(?<=[.!?])\s+/);
-    for (const candidate of candidates) {
-      const cleaned = cleanClause(candidate);
-      if (cleaned.length < 8 || cleaned.length > 320) continue;
-      if (!hasBullet && !REQUIREMENT_SIGNAL.test(cleaned)) continue;
-      if (/^(insert into|values\s*\(|on duplicate key update)/i.test(cleaned)) continue;
-      const key = cleaned.toLowerCase();
-      if (!seen.has(key)) {
-        seen.add(key);
-        clauses.push(cleaned);
-      }
-    }
-  }
-  return clauses.slice(0, 40);
-}
-function buildMissingExplicitRequirementScenarios(input, testCases) {
-  const suiteRows = testCases.map((testCase) => JSON.stringify(testCase));
-  return extractExplicitRequirementClauses(input).filter((clause) => !clauseIsCovered(clause, suiteRows)).map((clause) => ({
-    scenario: `Verify this explicit requirement point with complete steps and observable results: ${clause}`,
-    priority: NEGATIVE_SIGNAL.test(clause) ? "High" : "Medium",
-    type: NEGATIVE_SIGNAL.test(clause) ? "Negative" : "Positive"
-  }));
 }
 
 // supabase/functions/_shared/qaPlanningContext.ts
@@ -3787,7 +3747,7 @@ var HOST = process.env.LOCAL_AI_SERVER_HOST || "127.0.0.1";
 var PORT = Number(process.env.LOCAL_AI_SERVER_PORT || 8787);
 var MAX_BODY_BYTES = 20 * 1024 * 1024;
 var CACHE_TTL_MS2 = 5 * 60 * 1e3;
-var AUDIT_CACHE_VERSION = "audit-test-cases-2026-08-10-v3";
+var AUDIT_CACHE_VERSION = "audit-test-cases-2026-08-14-v4";
 var COVERAGE_CACHE_VERSION = "validate-coverage-2026-08-10-v4";
 var GENERATION_TIME_BUDGET_MS = 20 * 60 * 1e3;
 var RETRY_STAGE_RESERVE_MS = 3 * 60 * 1e3;
@@ -4085,6 +4045,9 @@ STRICT RULES:
 - Never turn process-only, documentation-only, or clarification advice into fabricated product behavior.
 - For event-driven persistence workflows, treat replay/concurrency idempotency, existing-state/timestamp preservation, uniqueness enforcement, tenant isolation, malformed data, non-interference, failure/retry, batch behavior, and downstream lifecycle as separate risks when supported by the requirement.
 - Every focused missing scenario and every testable recommendation must map to at least one returned testcase unless it is already covered by the existing suite.
+- A single testcase may close multiple overlapping findings. Return the minimum number of new rows needed for distinct risks.
+- Combine data-only permutations in testData when setup, action, expected outcome, post-condition, and failure impact are equivalent.
+- Keep separate rows when permissions, state transitions, messages, side effects, replay/concurrency behavior, or failure impact materially differ.
 
 GENERATION STYLE MODE: ${generationProfile.label}
 ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join("\n")}`;
@@ -4126,13 +4089,13 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join("\n")}`;
           `Coverage gaps to generate full testcase rows for:`,
           ...requestedCoverageGaps.map((gap, index) => `${index + 1}. ${gap}`),
           ``,
-          `Return only NEW testcase rows that cover these missing scenarios. Do not add unrelated extra cases.`
+          `Return only the NEW testcase rows needed to cover these missing scenarios. One row may close overlapping findings; do not add unrelated or data-only duplicate cases.`
         ] : [],
         ...requestedCoverageRecommendations.length > 0 ? [
           `Coverage recommendations to convert into professional testcase rows when testable:`,
           ...requestedCoverageRecommendations.map((recommendation, index) => `${index + 1}. ${recommendation}`),
           ``,
-          `For every testable recommendation, generate one or more complete executable testcase rows. Do not copy recommendation text into a testcase row, and do not fabricate behavior for process-only advice.`
+          `Address every testable recommendation using the minimum complete executable testcase rows needed for distinct risks. One row may address overlapping recommendations. Do not copy recommendation text into a row or fabricate behavior for process-only advice.`
         ] : [],
         ``,
         `Return only NEW or materially improved cases that cover missing or weak areas.`
@@ -4157,11 +4120,12 @@ ${generationProfile.auditPromptLines.map((line) => `- ${line}`).join("\n")}`;
       "Check whether requirement references, module, priority, test data, and post-condition are meaningful.",
       "Check whether the testcase names, steps, and expected results read like strong senior-QA work.",
       "Check whether high-risk, negative, and edge gaps are covered rather than only happy-path improvements.",
+      "Check that the enhancement is right-sized: no repeated data permutations, no row-count padding, and no loss of materially distinct risks.",
       ...requestedCoverageGaps.length > 0 ? ["Check whether the returned cases directly address the requested missing coverage scenarios instead of drifting into unrelated additions."] : [],
       ...requestedCoverageRecommendations.length > 0 ? ["Check whether every testable recommendation is converted into concrete steps and observable expected results without fabricating unspecified behavior."] : [],
       ...technicalWorkflowChecklist.length > 0 ? ["Check whether the enhancement set closes the applicable replay/concurrency, preservation, uniqueness, tenant-isolation, malformed-data, non-interference, failure/retry, batch, and downstream-lifecycle gaps."] : []
     ],
-    correctionReminder: "Return only materially useful new cases that close real coverage gaps or implement testable recommendations and read like an enterprise-ready senior-QA enhancement set."
+    correctionReminder: "Return the minimum materially useful new cases that close every distinct real gap or testable recommendation and read like an enterprise-ready senior-QA enhancement set."
   });
   const normalized = removeUnsupportedStrictTestCases(
     requirement,

@@ -3,8 +3,8 @@ import { cn } from '@/lib/utils';
 import { FileText, Rocket, PenTool, ScrollText, Target } from 'lucide-react';
 
 const INPUT_TYPES: (InputTypeOption & { icon: React.ReactNode })[] = [
-  { value: 'requirement', label: 'Full Requirement', icon: <FileText className="h-4 w-4" />, description: 'Generate 20-30 comprehensive test cases' },
-  { value: 'highlevel', label: 'High Level TCs', icon: <Rocket className="h-4 w-4" />, description: 'Generate 5-15 smoke tests quickly' },
+  { value: 'requirement', label: 'Full Requirement', icon: <FileText className="h-4 w-4" />, description: 'Generate a complete, requirement-sized testcase suite' },
+  { value: 'highlevel', label: 'High Level TCs', icon: <Rocket className="h-4 w-4" />, description: 'Generate concise, risk-based smoke tests' },
   { value: 'testcase', label: 'Complete TC', icon: <PenTool className="h-4 w-4" />, description: 'Fill in missing test case columns' },
   { value: 'scenario', label: 'Scenario', icon: <ScrollText className="h-4 w-4" />, description: 'Generate from scenario description' },
   { value: 'expected', label: 'Expected Result', icon: <Target className="h-4 w-4" />, description: 'Generate expected results only' },

@@ -142,3 +142,142 @@ test('strict requirement filtering removes contradictions and unsupported assump
     [valid.testCase, validNegativeControl.testCase, validAllTypes.testCase]
   );
 });
+
+test('simple requirements produce a complete right-sized suite without count padding', async () => {
+  const calls: ClaudeCliGenerationOptions[] = [];
+  const dashboardCase = {
+    ...professionalCase(0),
+    requirementReference: 'REQ-01',
+    module: 'Dashboard',
+    coverageArea: 'Access',
+    scenario: 'View the dashboard',
+    testCase: 'Verify that the user can view the dashboard',
+    testData: 'User with dashboard access',
+    preconditions: 'The user is authenticated.',
+    testSteps: '1. Open the dashboard.',
+    expectedResult: 'The dashboard is displayed to the user.',
+    postCondition: 'The dashboard remains available.',
+    type: 'Positive' as const,
+  };
+
+  configureClaudeCliStructuredGenerator(async <T>(options: ClaudeCliGenerationOptions) => {
+    calls.push(options);
+    return { testCases: [dashboardCase] } as T;
+  });
+
+  try {
+    const result = await runGenerateTestCasePipeline({
+      aiSettings: {
+        provider: 'claude_cli',
+        claudeCliModel: 'sonnet',
+        generationMode: 'professional_standard',
+        strictRequirementMode: false,
+      },
+      input: 'The user can view the dashboard.',
+      inputType: 'requirement',
+      images: [],
+      cacheKey: null,
+    });
+
+    assert.equal(calls.length, 1);
+    assert.deepEqual(result.testCases, [dashboardCase]);
+    const promptText = calls[0].userParts
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    assert.match(promptText, /Do not target or pad to a predetermined testcase count/);
+    assert.match(promptText, /input or data permutations/);
+    assert.doesNotMatch(promptText, /28 to 35|30 to 35/);
+  } finally {
+    configureClaudeCliStructuredGenerator(null);
+  }
+});
+
+test('requirement, high-level, and scenario validation reject missing explicit behavior without count floors', () => {
+  const suite = [{
+    ...professionalCase(0),
+    requirementReference: 'AC-01',
+    module: 'Sales Order List',
+    coverageArea: 'Filter Order',
+    scenario: 'ALL filter appears first',
+    testCase: 'Verify that the user sees the ALL filter first when configured filters exist',
+    testData: 'Tenant with configured filters',
+    expectedResult: 'The ALL filter appears first.',
+    type: 'Positive' as const,
+  }];
+  for (const inputType of ['requirement', 'highlevel', 'scenario'] as const) {
+    const validation = validateGeneratedCases(
+      inputType,
+      'Acceptance Criteria\n- ALL appears first when configured filters exist.\n- Selecting ALL clears every other selected filter.',
+      suite,
+      null,
+      true
+    );
+
+    assert.equal(validation.valid, false);
+    assert.ok(validation.violations.some((violation) =>
+      /Explicit requirement coverage is missing/i.test(violation) &&
+      /Selecting ALL clears every other selected filter/i.test(violation)
+    ));
+    assert.ok(validation.violations.every((violation) => !/expected at least/i.test(violation)));
+  }
+});
+
+test('validation requires a Negative row only when the requirement states a negative outcome', () => {
+  const mislabeledNegative = [{
+    ...professionalCase(0),
+    requirementReference: 'AC-01',
+    module: 'Login',
+    coverageArea: 'Credential Validation',
+    scenario: 'Invalid password error',
+    testCase: 'Verify that the user sees an error for an invalid password',
+    testData: 'Registered email and invalid password',
+    expectedResult: 'An invalid password error is displayed.',
+    type: 'Positive' as const,
+  }];
+  const validation = validateGeneratedCases(
+    'requirement',
+    'Acceptance Criteria\n- Invalid password displays an error.',
+    mislabeledNegative,
+    null,
+    true
+  );
+
+  assert.equal(validation.valid, false);
+  assert.ok(validation.violations.some((violation) => /has no Negative testcase/i.test(violation)));
+});
+
+test('equally noncompliant retries are not selected just because they contain more rows', async () => {
+  const calls: ClaudeCliGenerationOptions[] = [];
+  const buildInvalidCase = (index: number) => ({
+    ...professionalCase(index),
+    testCase: `Check profile display variation ${index + 1}`,
+    scenario: `Profile display variation ${index + 1}`,
+  });
+
+  configureClaudeCliStructuredGenerator(async <T>(options: ClaudeCliGenerationOptions) => {
+    calls.push(options);
+    const count = calls.length === 1 ? 4 : 2;
+    return { testCases: Array.from({ length: count }, (_, index) => buildInvalidCase(index)) } as T;
+  });
+
+  try {
+    const result = await runGenerateTestCasePipeline({
+      aiSettings: {
+        provider: 'claude_cli',
+        claudeCliModel: 'sonnet',
+        generationMode: 'rob_style',
+        strictRequirementMode: true,
+      },
+      input: 'Profile display',
+      inputType: 'scenario',
+      images: [],
+      cacheKey: null,
+    });
+
+    assert.equal(calls.length, 2);
+    assert.equal(result.testCases.length, 2);
+  } finally {
+    configureClaudeCliStructuredGenerator(null);
+  }
+});

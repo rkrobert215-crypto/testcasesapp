@@ -4,7 +4,7 @@ const FEATURES = [
   {
     icon: <Brain className="h-5 w-5" />,
     title: 'AI-Powered Analysis',
-    description: 'Advanced AI generates 20-30 comprehensive test cases with full coverage',
+    description: 'Advanced AI generates a right-sized, traceable suite with complete supported coverage',
   },
   {
     icon: <Clock className="h-5 w-5" />,
@@ -19,11 +19,11 @@ const FEATURES = [
 ];
 
 const INPUT_MODES = [
-  { icon: <FileText className="h-4 w-4" />, title: 'Full Requirement', description: 'Complete user story → 20-30 detailed test cases' },
-  { icon: <Rocket className="h-4 w-4" />, title: 'High Level TCs', description: 'Requirement → 5-15 quick smoke tests' },
-  { icon: <PenTool className="h-4 w-4" />, title: 'Complete TC', description: 'Test case → Fill missing columns' },
-  { icon: <ScrollText className="h-4 w-4" />, title: 'Scenario', description: 'Scenario → Generate complete details' },
-  { icon: <Target className="h-4 w-4" />, title: 'Expected Result', description: 'Test case → Generate expected outcomes' },
+  { icon: <FileText className="h-4 w-4" />, title: 'Full Requirement', description: 'Complete user story -> right-sized detailed suite' },
+  { icon: <Rocket className="h-4 w-4" />, title: 'High Level TCs', description: 'Requirement -> concise risk-based smoke suite' },
+  { icon: <PenTool className="h-4 w-4" />, title: 'Complete TC', description: 'Test case -> fill missing columns' },
+  { icon: <ScrollText className="h-4 w-4" />, title: 'Scenario', description: 'Scenario -> generate complete details' },
+  { icon: <Target className="h-4 w-4" />, title: 'Expected Result', description: 'Test case -> generate expected outcomes' },
 ];
 
 export function HelpSection() {
@@ -43,8 +43,8 @@ export function HelpSection() {
           </div>
           <p className="text-muted-foreground max-w-2xl">
             Transform your requirements into comprehensive, well-structured test cases instantly. 
-            Our AI analyzes your input and generates detailed scenarios covering positive, negative, 
-            edge cases, and security aspects.
+            Our AI analyzes your input and generates detailed scenarios covering positive, negative,
+            edge cases, and other requirement-supported risks.
           </p>
         </div>
       </div>

@@ -20,8 +20,8 @@ const HEADING_NAMES = new Set([
   'works with',
 ]);
 
-const REQUIREMENT_SIGNAL = /\b(must|shall|should|need to|needs to|only|except|ignored|ignore|defaults?|appears?|display(?:s|ed)?|creates?|updates?|preserves?|prevents?|allows?|supports?|applies?|evaluates?|clears?|deselects?|filters?|redirects?|sends?|shows?|requires?|cannot|does not|do not|if|when|after|before)\b/i;
-const NEGATIVE_SIGNAL = /\b(no|not|never|cannot|must not|does not|do not|disabled|invalid|missing|malformed|unauthorized|forbidden|ignored|false|except|without|failure|fails?|duplicate)\b/i;
+const REQUIREMENT_SIGNAL = /\b(can|must|shall|should|need to|needs to|only|except|ignored|ignore|defaults?|appears?|display(?:s|ed)?|creates?|updates?|preserves?|prevents?|allows?|supports?|applies?|evaluates?|clears?|deselects?|filters?|redirects?|sends?|shows?|saves?|uploads?|downloads?|requires?|cannot|does not|do not|if|when|after|before)\b/i;
+const NEGATIVE_SIGNAL = /\b(no|not|never|cannot|must not|does not|do not|disabled|invalid|empty|missing|required|malformed|unauthorized|forbidden|denied|blocked|rejected?|ignored|false|null|expired|timeout|except|without|failure|fails?|duplicate)\b/i;
 const BULLET_PREFIX = /^\s*(?:[-*\u2022]|\[(?: |x|X)?\]|\d+[.)])\s*/;
 
 const COVERAGE_STOP_WORDS = new Set([
@@ -159,6 +159,11 @@ export function extractExplicitRequirementClauses(input: string): string[] {
   }
 
   return clauses.slice(0, 40);
+}
+
+export function requirementSupportsNegativeOutcome(input: string): boolean {
+  const clauses = extractExplicitRequirementClauses(input);
+  return (clauses.length > 0 ? clauses : [input]).some((clause) => NEGATIVE_SIGNAL.test(clause));
 }
 
 export function buildMissingExplicitRequirementScenarios(

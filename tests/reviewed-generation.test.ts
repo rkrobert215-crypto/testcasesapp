@@ -100,6 +100,8 @@ test('coverage recommendations are converted through the professional testcase p
     assert.match(promptText, /Coverage recommendations to convert into professional testcase rows when testable/);
     assert.match(promptText, /Add explicit session-expiry and protected-action coverage/);
     assert.match(calls[0].systemPrompt, /Never turn process-only, documentation-only, or clarification advice into fabricated product behavior/);
+    assert.match(calls[0].systemPrompt, /minimum number of new rows needed for distinct risks/);
+    assert.match(promptText, /minimum complete executable testcase rows needed for distinct risks/);
   } finally {
     configureClaudeCliStructuredGenerator(null);
   }

@@ -328,34 +328,6 @@ const detectPrimaryAction = (input: string): string | null => {
   return null;
 };
 
-const estimateMinimumTestCases = (
-  inputType: InputType,
-  input: string,
-  insights: RequirementAnalysisResult | null
-): number => {
-  if (inputType === 'highlevel') {
-    return Math.max(10, Math.min(20, (insights?.acceptanceCriteria.length ?? 0) * 2 || 10));
-  }
-  if (inputType === 'testcase') return 1;
-  if (inputType === 'expected') return 1;
-
-  const bulletLines = input.split('\n').filter((line) => /^\s*[-*•]\s|^\s*\d+[.)]\s/.test(line)).length;
-  const paragraphCount = input.split(/\n\s*\n/).filter((paragraph) => paragraph.trim().length > 0).length;
-  const acCount = insights?.acceptanceCriteria.length ?? 0;
-  const normalizedBulletLines = Math.max(
-    bulletLines,
-    input.split('\n').filter((line) => /^\s*[-*•]\s|^\s*\d+[.)]\s/.test(line)).length
-  );
-
-  let baseline = 15;
-  if (normalizedBulletLines >= 5 || input.length > 1000 || paragraphCount >= 3) baseline = 20;
-  if (normalizedBulletLines >= 10 || input.length > 2000 || paragraphCount >= 6) baseline = 30;
-  if (normalizedBulletLines >= 15 || input.length > 3000) baseline = 40;
-  if (acCount > 0) baseline = Math.max(baseline, Math.min(70, acCount * 2));
-
-  return baseline;
-};
-
 const validateGeneratedCases = (
   inputType: InputType,
   input: string,
@@ -367,11 +339,6 @@ const validateGeneratedCases = (
   if (testCases.length === 0) {
     violations.push('No test cases were generated.');
     return { valid: false, violations };
-  }
-
-  const minimum = estimateMinimumTestCases(inputType, input, insights);
-  if (testCases.length < minimum) {
-    violations.push(`Generated only ${testCases.length} test cases, expected at least ${minimum} for this requirement size.`);
   }
 
   if (inputType !== 'testcase' && inputType !== 'expected') {
@@ -498,6 +465,8 @@ const buildInstructionText = (
     `MANDATORY OUTPUT QUALITY RULES:`,
     `- Read every line of the requirement and map each acceptance criteria point to one or more test cases.`,
     `- Include both Positive and Negative scenarios where appropriate.`,
+    `- Do not target or pad to a predetermined testcase count; cover each distinct supported behavior and risk once.`,
+    `- Combine data-only permutations in testData when setup, action, outcome, post-condition, and failure impact are equivalent.`,
     `- Do not invent roles, authorities, statuses, or features that are not in the requirement.`,
     `- Make the suite read like a senior QA deliverable, not generic AI output.`,
     `- Use practical business modules, priority, test data, and post-condition fields.`,
@@ -717,13 +686,11 @@ const isReviewApproved = (
 
 const scoreCandidate = (
   validation: { valid: boolean; violations: string[] },
-  review: ReviewResult,
-  testCases: GeneratedTestCase[]
+  review: ReviewResult
 ) => {
   return (
     review.qualityScore +
     (validation.valid ? 20 : 0) +
-    Math.min(testCases.length, 80) / 4 -
     validation.violations.length * 12 -
     review.coverageGaps.length * 5 -
     review.duplicateConcerns.length * 4 -
